@@ -128,6 +128,7 @@ class GridWorldEnv(gym.Env):
 
 		self.num_states = self.N * self.N
 		self.transition_matrix = self.init_transition_matrix()
+		self.transition_matrix_action = None # optional, no action-conditioned model by default
 
 		obs_vector_size = self.observation_space.shape[0]
 		self.num_observations = 2**(obs_vector_size)
@@ -153,6 +154,7 @@ class GridWorldEnv(gym.Env):
 		self._cached_transition_matrix_reverse_lookup = None
 		self._cached_observation_id_lookup = None
 		self._cached_observation_id_reverse_lookup = None 
+		self.transition_matrix_action = None # optional, no action-conditioned model by default
 
 	@property
 	def transition_matrix_lookup(self):
@@ -213,6 +215,21 @@ class GridWorldEnv(gym.Env):
 			'xy_to_state_id': self.transition_matrix_reverse_lookup, # (x,y) -> state_id
 				}
 
+	def calculate_action_transition_matrix(self):
+		'''
+		NOTE: Optional, feel free to ignore 
+		
+		Compute the action-conditioned transition model
+
+			T_action[s, a, s'] = P(X_{t+1} = s' | X_t = s, A_t = a)
+
+		If you are interested in experimenting with control/policies use this
+		  method to return a numpy array (tensor) with shape: (N, len(Actions), N)
+		  where for every (state s, action index a), T_action[s, a, :] is a valid
+		  probability distribution over next states (non-negative and sums to 1).
+		'''
+		return None
+	
 	def calculate_transition_matrix(self):
 		'''
 		Compute the state transition probability matrix T
@@ -383,14 +400,33 @@ class GridWorldEnv(gym.Env):
 	def motion_model(self, action: int):
 		''' 
 		Robot motion model
-		Robot only follows the transition model; hence, the current implementation ignores the action
+		
+		Default behavior:
+			Use the action-independent transition matrix T[s, s'], action is ignored by default
+		Optional:
+			If you implement self.transition_matrix_action (i.e. it is not None)
+			the provided action is used to select T[s, a, :] when sampling the next state.
 		'''
-		# sample from transition matrix T first
 		cur_state_id = self._get_state_id_from_pos(self.agent_pos)
-		row = self.transition_matrix[cur_state_id]
+		# if action-conditioned transition is implemented
+		if self.transition_matrix_action is not None:
+			# map action name or enum to index in [0, len(Actions))
+			if isinstance(action, str):
+				action_enum = Actions[action]
+			elif isinstance(action, Actions):
+				action_enum = action
+			else:
+				raise ValueError('expected action to be either a string or Actions enum, received {}'.format(type(action)))
+			action_idx = list(Actions).index(action_enum)
+			row = self.transition_matrix_action[cur_state_id, action_idx]
+		else:
+			row = self.transition_matrix[cur_state_id] # default, use action-independent T
+
 		row_sum = row.sum()
-		if not np.isclose(row_sum, 1.0): # guard against small numerical issues
-			row = row / row_sum 
+		if row_sum <= 0:
+			raise ValueError('transition probabilities for state {} and action {} must sum to a positive value'.format(cur_state_id, action))
+		if not np.isclose(row_sum, 1.0): # just in case there are numerical issues
+			row = row / row_sum
 		next_state_id = np.random.choice(self.num_states, p=row) # randomly choose based on prob
 		next_xy = self.transition_matrix_lookup[next_state_id]
 		self.agent_pos = np.array(next_xy, dtype=np.int32) # update robot position
@@ -432,6 +468,9 @@ class GridWorldEnv(gym.Env):
 		# construct environment models/matrices
 		self.calculate_transition_matrix()
 		self.calculate_observation_matrix()
+
+		# optional, None by default, used to construct action-conditioned T
+		self.transition_matrix_action = self.calculate_action_transition_matrix() 
 
 		# place the agent randomly on the map
 		self.agent_pos = self.init_agent_pos()
