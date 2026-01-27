@@ -20,7 +20,7 @@ def get_state_probabilities(observation: Tuple[int, int, int, int],
 		model_info: dictionary of model information provided by the environment. Items inside:
 			- transition_matrix: numpy array of shape (N*N, N*N)
 				- state transition matrix P(x_t | x_{t-1})
-			- observation_matrix: numpy array of shape (N*N, Z)
+			- observation_matrix: numpy array of shape (N*N, Z)	
 				- observation likelihoods P(o_t | x_t)
 			- grid_shape: (N,N) tuple of the gridworld dimensions
 			- num_states: N*N total number of possible states (includes obstacles)
@@ -40,11 +40,12 @@ def get_state_probabilities(observation: Tuple[int, int, int, int],
 		return _get_dummy_probs(observation,  model_info, observation_history)
 	
 	else:
-		return NotImplementedError('You must implement get_state_probabilities() \n You should remove/comment the `NotImplementedError` return when completed.')
+		#return NotImplementedError('You must implement get_state_probabilities() \n You should remove/comment the `NotImplementedError` return when completed.')
+		print('Filtering')
 
 ## -------------------------------------------------
 
-def _get_dummy_probs(priviledged_info, model_info, observation_history, 
+def  _get_dummy_probs(priviledged_info, model_info, observation_history, 
 					high_uncertainty_duration=0.5, sigma_range=(50.0,2.0), max_steps=100):
 	'''
 	simulate a dummy scenario with an arbitrary gaussian probability for converging to the true localization.

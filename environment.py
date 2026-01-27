@@ -184,7 +184,7 @@ class GridWorldEnv(gym.Env):
 			self._cached_observation_id_reverse_lookup = {obs_id:obs_raw for obs_raw, obs_id in self.observation_id_lookup.items()}
 		return self._cached_observation_id_reverse_lookup
 
-	def init_transition_matrix(self):
+	def  init_transition_matrix(self):
 		'''initialize with zeros'''
 		return np.zeros((self.num_states, self.num_states))
 	
@@ -247,19 +247,40 @@ class GridWorldEnv(gym.Env):
 
 		Hints:
 		- You may want to use the lookups/reverse-lookups to get state/observation indices
-		- The Directions Enum provides your with direction definitions for convenience
-		- 
-
+		- The Directions(Enum) provides your with direction definitions for convenience
 		'''
 
 		T = self.init_transition_matrix()
 
+		"""___our implementation__
+        forr each free-cell, we look at all possible directions (N, E, S, W, NE, NW, SE, SW).
+        if the neighboring cell in that direction is also a free-cell, we consider it a valid neighbor.
+        we then assign uniform transition probabilities to all valid neighbors.
+        we also handle the case where a free-cell has no valid neighbors (self-loop).
+        
+        TODO: implement a transition model that considers robot dynamics and stochasticity.
+		"""		
+		valid_neighbors = []
+  
+		for free_cell in self.all_free_cell_pos:
+			valid_neighbors.clear()
+			state_id = self.transition_matrix_reverse_lookup[tuple(free_cell)]
+			# check all possible directions
+			for direction in Directions:
+				neighbor_cell = free_cell + np.array(direction.value)
+				# check if neighbor is a free cell
+				if np.any(np.all(self.all_free_cell_pos==neighbor_cell, axis=1)):
+					valid_neighbors.append(self.transition_matrix_reverse_lookup[tuple(neighbor_cell)])
+			# compute transition probabilities
+			if len(valid_neighbors) == 1:
+				# only one valid neighbor, self-loop
+				T[state_id, state_id] = 1.0
+			else:
+				prob = 1.0 / len(valid_neighbors)
+				for neighbor_id in valid_neighbors:
+					T[state_id, neighbor_id] = prob
+     
 		## -------
-		# TODO: Implement your own transition model 
-	
-		
-		## -------
-
 		# check transition matrix is valid
 		row_sums = T.sum(axis=1)
 		valid_states = np.any(T != 0, axis=1)
@@ -267,7 +288,24 @@ class GridWorldEnv(gym.Env):
 		assert np.all(T>=0), 'T contains negative values'
 
 		self.transition_matrix = T
-	
+  
+		## -------
+		# sanity check
+		for state in range(self.num_states):
+			state_pos=self.transition_matrix_lookup[state]
+			# check if the state we considered a obstacle is really an obstacle in the map
+			if (np.sum(T[state]) == 0) and (state_pos in self.all_free_cell_pos) and (state_pos not in self.all_obstacle_pos):
+				print(f"ERROR: state {state} wrongly classified (sum={np.sum(T[state])}).")
+				print(f"\tIn free cell: {np.any(self.all_free_cell_pos==state_pos)}")
+				print(f"\tNot in obstacle:{np.any(self.all_obstacle_pos!=state_pos)}")
+			# check if the state we considered a free-cell is really a free-cell in the map
+			if (np.sum(T[state]) == 1) and (state_pos not in self.all_free_cell_pos) and (state_pos in self.all_obstacle_pos):
+				print(f"ERROR: state {state} wrongly classified (sum={np.sum(T[state])}).")
+				print(f"\tIn free cell: {np.any(self.all_free_cell_pos==state_pos)}")
+				print(f"\tNot in obstacle:{np.any(self.all_obstacle_pos!=state_pos)}")
+		# check if the number of states with non-zero transitions matches the total number of free-cells
+		#if int(np.sum(T)) == len(self.all_free_cell_pos): print("[INFO] transtion matrix created!")
+    	
 	def calculate_observation_matrix(self):
 		'''
 		Compute the observation (emission) probability matrix O
@@ -297,12 +335,93 @@ class GridWorldEnv(gym.Env):
 		'''
 
 		O = self.init_observation_matrix()
+  
+		"""__our implementation__
+		Given each free-cell in the grid (states), we compute the observation likelihoods for each possible observation. 
+		(Given a true map and robot position)
+		We consider two cases:
+		1. pe > 0: for each free-cell, we compute the Hamming distance between the robot's observation and all possible observations.
+		   	We then compute the likelihood of each possible observation given the robot's observation.
+			We use the binomial model to compute the likelihoods.
+		2. pe = 0: deterministic observation model, where each free-cell has a single observation based on adjacent obstacles.
+		"""
+		#__init__
+		obstacle_set = {tuple(pos.tolist()) for pos in self.all_obstacle_pos}
+		obs_lookup = self.observation_id_lookup
+		state_lookup = self.transition_matrix_reverse_lookup
+		prob_errors = [0, 0.05, 0.4]  # probability of sensor error
+		pe = prob_errors[1]  
+  
+		def compute_hamming_distance(
+			robot_obs: np.array, 
+   			possible_obs: np.array
+      	) -> int:
+			"""Compute Hamming distance givrn two binary vectors
 
-		## -------
-		# TODO: Implement your own observation model 
-		
-		
-		## -------
+			Args:
+				obs (np.array): robot's observation
+				true_obs (np.array): pseudo ground-truth observation
+
+			Returns:
+				int: Hamming distance between the two observations
+			"""
+			return np.sum(robot_obs != possible_obs)	
+
+		def obs_likehood(
+			pe: int,
+			hamm_dist: int,
+			total_num_bits: int=4,
+		)-> float:
+			"""Compute the likelihood of an observation given the Hamming distance from 
+			what can be observed in the environment.
+
+			Args:
+				pe (int, optional): probability error. Defaults to 0.6.
+				hamm_dist (int, optional): hamming distance. Defaults to 0.
+				total_num_bits (int, optional): total number of bits in the observation. Defaults to 4.
+
+			Returns:
+				float: likelihood of the observation given what can be observed in the environment.
+			"""
+			p_correct = (1 - pe) ** (total_num_bits - hamm_dist)
+			p_incorrect = (pe) ** (hamm_dist)
+			return p_correct * p_incorrect
+
+		if pe > 0:
+			for free_cell in self.all_free_cell_pos:
+				state_id = state_lookup[tuple(free_cell)]
+    
+				# obtain the groundthrouth observation
+				obs_bits = [0, 0, 0, 0]
+				for idx, obs_dir in enumerate(Observations):
+					dx, dy = obs_dir.value.value
+					neighbor = (free_cell[0] + dx, free_cell[1] + dy)
+					obs_bits[idx] = 1 if neighbor in obstacle_set else 0
+
+				# for each state consider all possible observations likelihoods
+				for possible_obs in self.all_possible_observations:
+					robot_obs = np.array(obs_bits) # TODO: check if this is correct
+					possible_obs = np.array(possible_obs)
+					hamm_dist = compute_hamming_distance(robot_obs, possible_obs)
+					obs_likehood_value = obs_likehood(pe, hamm_dist)
+					obs_id = self.observation_id_lookup[tuple(possible_obs.tolist())]
+					O[state_id, obs_id] = obs_likehood_value
+		else:				
+			## -------
+			# deterministic observation model: each free cell has a single observation based on adjacent obstacles
+
+
+			for free_cell in self.all_free_cell_pos:
+				state_id = state_lookup[tuple(free_cell.tolist())]
+				obs_bits = [0, 0, 0, 0]
+				for idx, obs_dir in enumerate(Observations):
+					dx, dy = obs_dir.value.value
+					neighbor = (free_cell[0] + dx, free_cell[1] + dy)
+					obs_bits[idx] = 1 if neighbor in obstacle_set else 0
+				obs_id = obs_lookup[tuple(obs_bits)]
+				O[state_id, obs_id] = 1.0
+			
+			## -------
 
 		# check observation matrix is valid
 		row_sums = O.sum(axis=1)
@@ -465,7 +584,7 @@ class GridWorldEnv(gym.Env):
 		self.cur_step = 1
 		self.prev_action = Actions.STAY 
 
-		# construct environment models/matrices
+		#TODO: construct environment models/matrices
 		self.calculate_transition_matrix()
 		self.calculate_observation_matrix()
 
@@ -746,4 +865,3 @@ def save_gif(frames: List[Image.Image], save_to_path='figures/sample.gif'):
 	append_images=frames[1:], # append all subsequent frames
 	duration=200, # duration of each frame in milliseconds
 	loop=0) # loop forever (set to 1 for one-time playback)
-
