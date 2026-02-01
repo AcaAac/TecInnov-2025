@@ -22,6 +22,13 @@ I have implemented an Imitation Learning (BC) and Reinforcement Learning (RL) pi
 ### Prerequisite
 You need **PyTorch** and **Matplotlib** installed.
 ```bash
+create an environment and install the following packages:
+
+conda create -n drone_env python=3.8
+conda activate drone_env
+pip install -r requirements.txt
+
+or 
 pip install torch matplotlib pandas numpy
 ```
 
