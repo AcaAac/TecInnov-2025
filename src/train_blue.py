@@ -11,7 +11,10 @@ try:
     import torch.optim as optim
     from torch.utils.data import TensorDataset, DataLoader
     from ppo import PPOAgent
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.backends.mps.is_available():
+        DEVICE = torch.device("mps")
+    else:
+        DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 except ImportError:
     print("Warning: PyTorch not found. Training will not work, but data collection might.")
     torch = None

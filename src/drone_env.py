@@ -16,11 +16,13 @@ class Config:
     MIN_INIT_DIST: float = 0.3
     
     # Physics - Red (Kamikaze: Fast, Agile, High Acceleration)
+    RED_MASS: float = 1.0
     RED_MAX_ACCEL: float = 3.0
     RED_MAX_SPEED: float = 1.8
     RED_DRAG: float = 0.05
 
     # Physics - Blue (Fugitive: Heavy, Stable, Slow to turn)
+    BLUE_MASS: float = 2.0
     BLUE_MAX_ACCEL: float = 0.6
     BLUE_MAX_SPEED: float = 0.4
     BLUE_DRAG: float = 0.2
@@ -72,12 +74,14 @@ class RedPursuitPolicy(AgentPolicy):
             p_red = my_state[0:2]
             v_red = my_state[2:4]
             p_blue = target_state[0:2]
+            v_blue = target_state[2:4]
             
-            # PD Control
+            # PD Control on relative motion
             error_pos = p_blue - p_red
+            error_vel = v_blue - v_red
             Kp = 7.0
             Kd = 1.0
-            desired_acc = Kp * error_pos - Kd * v_red
+            desired_acc = Kp * error_pos + Kd * error_vel
             return desired_acc
 
 class BlueEvasivePolicy(AgentPolicy):
@@ -271,12 +275,15 @@ class DroneEnv:
             max_acc = CONFIG.RED_MAX_ACCEL
             max_spd = CONFIG.RED_MAX_SPEED
             drag = CONFIG.RED_DRAG
+            mass = CONFIG.RED_MASS
         else:
             max_acc = CONFIG.BLUE_MAX_ACCEL
             max_spd = CONFIG.BLUE_MAX_SPEED
             drag = CONFIG.BLUE_DRAG
+            mass = CONFIG.BLUE_MASS
 
-        acc = np.clip(action, -max_acc, max_acc)
+        force = np.clip(action, -max_acc, max_acc)
+        acc = force / mass
         vel += acc * CONFIG.DT
         vel *= (1.0 - drag * CONFIG.DT)
         

@@ -15,18 +15,20 @@ class Config:
     # Simulation
     DT: float = 0.05
     MAX_TIME: float = 30.0
-    ARENA_SIZE: float = 1.0
+    ARENA_SIZE: float = 3.0
     GRID_SIZE: int = 25  # For discrete mode
     CAPTURE_RADIUS: float = 0.05
     MIN_INIT_DIST: float = 0.3
     
     # Physics - Red (Kamikaze: Fast, Agile, High Acceleration)
-    RED_MAX_ACCEL: float = 3  # Doubled acceleration
+    RED_MASS: float = 1.0
+    RED_MAX_ACCEL: float = 3  # Max applied force (interpreted as accel when mass=1.0)
     RED_MAX_SPEED: float = 1.8  # Higher top speed
     RED_DRAG: float = 0.05      # Less drag (aerodynamic)
 
     # Physics - Blue (Fugitive: Heavy, Stable, Slow to turn)
-    BLUE_MAX_ACCEL: float = 0.4  # Lower acceleration
+    BLUE_MASS: float = 1.0
+    BLUE_MAX_ACCEL: float = 0.4  # Max applied force (interpreted as accel when mass=1.0)
     BLUE_MAX_SPEED: float = 0.4  # Lower top speed
     BLUE_DRAG: float = 0.5       # High drag (heavy/stable)
     
@@ -134,7 +136,7 @@ class DroneEnv:
 
     def _step_continuous(self, state, action, agent_type):
         # state: x, y, vx, vy
-        # action: ax, ay
+        # action: fx, fy (force-like input)
         pos = state[0:2]
         vel = state[2:4]
         
@@ -143,12 +145,15 @@ class DroneEnv:
             max_acc = CONFIG.RED_MAX_ACCEL
             max_spd = CONFIG.RED_MAX_SPEED
             drag = CONFIG.RED_DRAG
+            mass = CONFIG.RED_MASS
         else:
             max_acc = CONFIG.BLUE_MAX_ACCEL
             max_spd = CONFIG.BLUE_MAX_SPEED
             drag = CONFIG.BLUE_DRAG
+            mass = CONFIG.BLUE_MASS
 
-        acc = np.clip(action, -max_acc, max_acc)
+        force = np.clip(action, -max_acc, max_acc)
+        acc = force / mass
         
         # Physics update
         vel += acc * CONFIG.DT
@@ -237,15 +242,17 @@ class RedPursuitPolicy(AgentPolicy):
             p_red = my_state[0:2]
             v_red = my_state[2:4]
             p_blue = target_state[0:2]
+            v_blue = target_state[2:4]
             
             # Vector to target
             error_pos = p_blue - p_red
+            error_vel = v_blue - v_red
             
             # Proportional gain
-            Kp = 4.0
+            Kp = 5.0
             Kd = 1.0 # Damping
             
-            desired_acc = Kp * error_pos - Kd * v_red
+            desired_acc = Kp * error_pos + Kd * error_vel
             return desired_acc
 
 class BlueEvasivePolicy(AgentPolicy):
@@ -302,7 +309,7 @@ class BlueEvasivePolicy(AgentPolicy):
             dist = np.linalg.norm(diff) + 1e-6
             repulse_dir = diff / dist
             # Stronger repulsion when closer: 1/dist^2
-            force_red = repulse_dir * (0.5 / (dist)) 
+            force_red = repulse_dir * (1 / (dist ** 2)) 
             
             # Repulse from Walls
             force_wall = np.zeros(2)
@@ -403,7 +410,7 @@ def run_batch_simulation(num_episodes, mode, show_anim=False):
     
     # Visualization Setup
     if show_anim:
-        fig, ax = plt.subplots(figsize=(5,5))
+        fig, ax = plt.subplots(figsize=(10,10))
         ax.set_xlim(0, CONFIG.ARENA_SIZE)
         ax.set_ylim(0, CONFIG.ARENA_SIZE)
         ax.set_title(f"Drone Pursuit ({mode})")
