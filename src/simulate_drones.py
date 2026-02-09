@@ -19,18 +19,19 @@ class Config:
     GRID_SIZE: int = 25  # For discrete mode
     CAPTURE_RADIUS: float = 0.05
     MIN_INIT_DIST: float = 0.3
-    
+    WALLS_MODE: bool = False  # True=hard walls, False=wrap-around (toroidal)
+
     # Physics - Red (Kamikaze: Fast, Agile, High Acceleration)
     RED_MASS: float = 1.0
-    RED_MAX_ACCEL: float = 3  # Max applied force (interpreted as accel when mass=1.0)
-    RED_MAX_SPEED: float = 1.8  # Higher top speed
-    RED_DRAG: float = 0.05      # Less drag (aerodynamic)
+    RED_MAX_ACCEL: float = 2.0
+    RED_MAX_SPEED: float = 1.8
+    RED_DRAG: float = 0.05
 
     # Physics - Blue (Fugitive: Heavy, Stable, Slow to turn)
     BLUE_MASS: float = 1.0
-    BLUE_MAX_ACCEL: float = 0.4  # Max applied force (interpreted as accel when mass=1.0)
-    BLUE_MAX_SPEED: float = 0.4  # Lower top speed
-    BLUE_DRAG: float = 0.5       # High drag (heavy/stable)
+    BLUE_MAX_ACCEL: float = 1.0
+    BLUE_MAX_SPEED: float = 0.8
+    BLUE_DRAG: float = 0.2
     
     # Data
     NUM_EPISODES: int = 200
@@ -42,6 +43,46 @@ class Config:
         return int(self.MAX_TIME / self.DT)
 
 CONFIG = Config()
+
+# --- Helper Functions ---
+
+def _get_toroidal_displacement(target_pos: np.ndarray,
+                               my_pos: np.ndarray,
+                               mode: str = 'CONTINUOUS') -> np.ndarray:
+    """
+    Calculate shortest displacement vector from my_pos to target_pos.
+
+    In walls mode: Returns euclidean difference (target_pos - my_pos)
+    In toroidal mode: Returns shortest displacement considering wrap-around
+
+    Args:
+        target_pos: Target position [x, y] (grid indices for discrete, coords for continuous)
+        my_pos: Current position [x, y]
+        mode: 'DISCRETE' or 'CONTINUOUS' (determines wrap boundary)
+
+    Returns:
+        Displacement vector pointing from my_pos toward target_pos via shortest path
+    """
+    diff = target_pos - my_pos
+
+    # No correction needed in walls mode
+    if CONFIG.WALLS_MODE:
+        return diff
+
+    # Determine wrap boundary based on mode
+    boundary = CONFIG.GRID_SIZE if mode == 'DISCRETE' else CONFIG.ARENA_SIZE
+    half_boundary = boundary / 2.0
+
+    # Adjust each dimension for toroidal topology
+    for i in range(2):
+        if diff[i] > half_boundary:
+            # Wrapping backward is shorter
+            diff[i] -= boundary
+        elif diff[i] < -half_boundary:
+            # Wrapping forward is shorter
+            diff[i] += boundary
+
+    return diff
 
 # --- Environment ---
 
@@ -68,7 +109,19 @@ class DroneEnv:
         for _ in range(100):
             pos_blue = self.rng.rand(2) * CONFIG.ARENA_SIZE
             pos_red = self.rng.rand(2) * CONFIG.ARENA_SIZE
-            if np.linalg.norm(pos_blue - pos_red) >= CONFIG.MIN_INIT_DIST:
+
+            # Check minimum separation distance
+            if CONFIG.WALLS_MODE:
+                dist = np.linalg.norm(pos_blue - pos_red)
+            else:
+                # Use toroidal distance for wrap-around mode
+                diff = pos_blue - pos_red
+                for i in range(2):
+                    if abs(diff[i]) > CONFIG.ARENA_SIZE / 2:
+                        diff[i] = CONFIG.ARENA_SIZE - abs(diff[i])
+                dist = np.linalg.norm(diff)
+
+            if dist >= CONFIG.MIN_INIT_DIST:
                 break
         
         if self.mode == 'DISCRETE':
@@ -131,7 +184,13 @@ class DroneEnv:
         ]
         dx, dy = moves[action]
         x, y = state
-        nx, ny = np.clip([x + dx, y + dy], 0, CONFIG.GRID_SIZE - 1)
+        if CONFIG.WALLS_MODE:
+            # Hard walls: clamp to grid boundaries
+            nx, ny = np.clip([x + dx, y + dy], 0, CONFIG.GRID_SIZE - 1)
+        else:
+            # Wrap-around: modulo arithmetic
+            nx = (x + dx) % CONFIG.GRID_SIZE
+            ny = (y + dy) % CONFIG.GRID_SIZE
         return np.array([nx, ny])
 
     def _step_continuous(self, state, action, agent_type):
@@ -164,15 +223,22 @@ class DroneEnv:
             vel = vel / speed * max_spd
             
         pos += vel * CONFIG.DT
-        
-        # Boundary handling: Clamp and zero velocity if hitting wall
-        for i in range(2):
-            if pos[i] < 0:
-                pos[i] = 0
-                vel[i] = 0 # Inelastic collision
-            elif pos[i] > CONFIG.ARENA_SIZE:
-                pos[i] = CONFIG.ARENA_SIZE
-                vel[i] = 0
+
+        # Boundary handling
+        if CONFIG.WALLS_MODE:
+            # Hard walls with inelastic collision
+            for i in range(2):
+                if pos[i] < 0:
+                    pos[i] = 0
+                    vel[i] = 0  # Inelastic collision
+                elif pos[i] > CONFIG.ARENA_SIZE:
+                    pos[i] = CONFIG.ARENA_SIZE
+                    vel[i] = 0
+        else:
+            # Wrap-around mode (toroidal topology)
+            # Velocity and acceleration are preserved
+            for i in range(2):
+                pos[i] = pos[i] % CONFIG.ARENA_SIZE
                 
         return np.array([pos[0], pos[1], vel[0], vel[1]])
 
@@ -183,7 +249,18 @@ class DroneEnv:
         else:
             p1 = self.blue_state[0:2]
             p2 = self.red_state[0:2]
-        return np.linalg.norm(p1 - p2)
+
+        if CONFIG.WALLS_MODE:
+            # Euclidean distance
+            return np.linalg.norm(p1 - p2)
+        else:
+            # Toroidal distance (shortest path through wrap-around)
+            diff = p1 - p2
+            for i in range(2):
+                if abs(diff[i]) > CONFIG.ARENA_SIZE / 2:
+                    # Shorter to go the other way
+                    diff[i] = CONFIG.ARENA_SIZE - abs(diff[i])
+            return np.linalg.norm(diff)
 
     def _get_obs(self):
         return {
@@ -212,7 +289,7 @@ class RedPursuitPolicy(AgentPolicy):
             target_pos = obs['blue']
             
             # Simple heuristic: move in direction of sign(diff)
-            diff = target_pos - my_pos
+            diff = _get_toroidal_displacement(target_pos, my_pos, mode='DISCRETE')
             # diff is [dx, dy] indices
             dx = int(np.sign(diff[0]))
             dy = int(np.sign(diff[1]))
@@ -245,7 +322,7 @@ class RedPursuitPolicy(AgentPolicy):
             v_blue = target_state[2:4]
             
             # Vector to target
-            error_pos = p_blue - p_red
+            error_pos = _get_toroidal_displacement(p_blue, p_red, mode='CONTINUOUS')
             error_vel = v_blue - v_red
             
             # Proportional gain
@@ -267,19 +344,20 @@ class BlueEvasivePolicy(AgentPolicy):
             my_pos = obs['blue']
             opp_pos = obs['red']
             
-            diff = my_state = my_pos - opp_pos
+            diff = my_state = _get_toroidal_displacement(my_pos, opp_pos, mode='DISCRETE')
             # We want to increase distance.
             # Move in direction of sign(diff) to get further away
             dx = int(np.sign(diff[0]))
             dy = int(np.sign(diff[1]))
-            
-            # Wall avoidance heuristic for grid
-            # If at detailed boundary, invert component
-            if my_pos[0] == 0: dx = 1
-            if my_pos[0] == CONFIG.GRID_SIZE-1: dx = -1
-            if my_pos[1] == 0: dy = 1
-            if my_pos[1] == CONFIG.GRID_SIZE-1: dy = -1
-            
+
+            # Wall avoidance heuristic for grid (only in walls mode)
+            if CONFIG.WALLS_MODE:
+                # If at detailed boundary, invert component
+                if my_pos[0] == 0: dx = 1
+                if my_pos[0] == CONFIG.GRID_SIZE-1: dx = -1
+                if my_pos[1] == 0: dy = 1
+                if my_pos[1] == CONFIG.GRID_SIZE-1: dy = -1
+
             # Convert to action
             if dx==0 and dy==0: 
                 # If on top of each other (rare), pick random move
@@ -305,24 +383,25 @@ class BlueEvasivePolicy(AgentPolicy):
             p_red = opp_state[0:2]
             
             # Repulse from Red
-            diff = p_blue - p_red
+            diff = _get_toroidal_displacement(p_blue, p_red, mode='CONTINUOUS')
             dist = np.linalg.norm(diff) + 1e-6
             repulse_dir = diff / dist
             # Stronger repulsion when closer: 1/dist^2
             force_red = repulse_dir * (1 / (dist ** 2)) 
             
-            # Repulse from Walls
+            # Repulse from Walls (only in walls mode)
             force_wall = np.zeros(2)
-            margin = 0.2
-            # Left wall (x=0)
-            if p_blue[0] < margin: force_wall[0] += 1.0 / (p_blue[0] + 0.01)
-            # Right wall (x=1)
-            if p_blue[0] > 1.0 - margin: force_wall[0] -= 1.0 / (1.0 - p_blue[0] + 0.01)
-            # Bottom wall (y=0)
-            if p_blue[1] < margin: force_wall[1] += 1.0 / (p_blue[1] + 0.01)
-            # Top wall (y=1)
-            if p_blue[1] > 1.0 - margin: force_wall[1] -= 1.0 / (1.0 - p_blue[1] + 0.01)
-            
+            if CONFIG.WALLS_MODE:
+                margin = 0.2
+                # Left wall (x=0)
+                if p_blue[0] < margin: force_wall[0] += 1.0 / (p_blue[0] + 0.01)
+                # Right wall (x=1)
+                if p_blue[0] > 1.0 - margin: force_wall[0] -= 1.0 / (1.0 - p_blue[0] + 0.01)
+                # Bottom wall (y=0)
+                if p_blue[1] < margin: force_wall[1] += 1.0 / (p_blue[1] + 0.01)
+                # Top wall (y=1)
+                if p_blue[1] > 1.0 - margin: force_wall[1] -= 1.0 / (1.0 - p_blue[1] + 0.01)
+
             # Juke: Add perpendicular noise if red is close and fast
             juke_force = np.zeros(2)
             if dist < 0.2:
@@ -414,15 +493,25 @@ def run_batch_simulation(num_episodes, mode, show_anim=False):
         ax.set_xlim(0, CONFIG.ARENA_SIZE)
         ax.set_ylim(0, CONFIG.ARENA_SIZE)
         ax.set_title(f"Drone Pursuit ({mode})")
-        blue_dot, = ax.plot([], [], 'bo', label='Blue (Evader)')
-        red_dot, = ax.plot([], [], 'ro', label='Red (Pursuer)')
+        blue_dot, = ax.plot([], [], 'bo', markersize=10, label='Blue (Evader)')
+        red_dot, = ax.plot([], [], 'ro', markersize=10, label='Red (Pursuer)')
+
+        # Add capture radius circle around red drone
+        capture_circle = plt.Circle((0, 0), CONFIG.CAPTURE_RADIUS,
+                                   color='red', fill=False, linestyle='--',
+                                   linewidth=2, alpha=0.5, label='Capture Radius')
+        ax.add_patch(capture_circle)
+
         ax.legend()
+        ax.set_aspect('equal')
         plt.ion()
         plt.show()
-        
+
         def update_render(b, r):
             blue_dot.set_data([b[0]], [b[1]])
             red_dot.set_data([r[0]], [r[1]])
+            # Update capture radius circle position to follow red drone
+            capture_circle.center = (r[0], r[1])
             plt.pause(0.001)
     else:
         update_render = None
