@@ -138,7 +138,17 @@ class PPOAgent:
         old_log_probs = torch.tensor(np.array(self.log_probs), dtype=torch.float32).to(device)
         
         dataset_size = len(states)
-        
+        metrics = {
+            'loss_total': 0.0,
+            'policy_loss': 0.0,
+            'value_loss': 0.0,
+            'entropy': 0.0,
+            'approx_kl': 0.0,
+            'clip_frac': 0.0
+        }
+        updates = 0
+        early_stop = False
+
         for _ in range(epochs):
             indices = np.random.permutation(dataset_size)
             
@@ -156,7 +166,7 @@ class PPOAgent:
                 dist, v_pred = self.model(s_batch)
                 
                 # Value Loss
-                v_loss = F.mse_loss(v_pred.squeeze(), ret_batch)
+                v_loss = F.mse_loss(v_pred.squeeze(-1), ret_batch)
                 
                 # Policy Loss
                 log_prob = dist.log_prob(a_batch)
@@ -165,6 +175,8 @@ class PPOAgent:
                 ratio = torch.exp(log_prob - old_logp_batch)
                 clip_adv = torch.clamp(ratio, 1-self.clip_ratio, 1+self.clip_ratio) * adv_batch
                 p_loss = -(torch.min(ratio * adv_batch, clip_adv)).mean()
+                approx_kl = (old_logp_batch - log_prob).mean()
+                clip_frac = ((ratio - 1.0).abs() > self.clip_ratio).float().mean()
                 
                 # Entropy Bonus
                 entropy = dist.entropy().mean()
@@ -176,6 +188,26 @@ class PPOAgent:
                 # Clip grads usually good practice
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
                 self.optimizer.step()
-                
+
+                metrics['loss_total'] += loss.item()
+                metrics['policy_loss'] += p_loss.item()
+                metrics['value_loss'] += v_loss.item()
+                metrics['entropy'] += entropy.item()
+                metrics['approx_kl'] += approx_kl.item()
+                metrics['clip_frac'] += clip_frac.item()
+                updates += 1
+
+                if approx_kl.item() > 1.5 * self.target_kl:
+                    early_stop = True
+                    break
+            if early_stop:
+                break
+
+        if updates > 0:
+            for key in metrics:
+                metrics[key] /= updates
+        metrics['updates'] = updates
+        metrics['early_stop'] = float(early_stop)
+
         self.clear_memory()
-        return loss.item() # approximate last loss
+        return metrics

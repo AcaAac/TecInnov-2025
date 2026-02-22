@@ -23,12 +23,12 @@ class Config:
 
     # Physics - Red (Kamikaze: Fast, Agile, High Acceleration)
     RED_MASS: float = 1.0
-    RED_MAX_ACCEL: float = 2.0
-    RED_MAX_SPEED: float = 1.8
+    RED_MAX_ACCEL: float = 4.0
+    RED_MAX_SPEED: float = 2.0
     RED_DRAG: float = 0.05
 
     # Physics - Blue (Fugitive: Heavy, Stable, Slow to turn)
-    BLUE_MASS: float = 1.0
+    BLUE_MASS: float = 2.0
     BLUE_MAX_ACCEL: float = 1.0
     BLUE_MAX_SPEED: float = 0.8
     BLUE_DRAG: float = 0.2
@@ -326,7 +326,7 @@ class RedPursuitPolicy(AgentPolicy):
             error_vel = v_blue - v_red
             
             # Proportional gain
-            Kp = 5.0
+            Kp = 4.0
             Kd = 1.0 # Damping
             
             desired_acc = Kp * error_pos + Kd * error_vel

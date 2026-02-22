@@ -18,14 +18,14 @@ class Config:
 
     # Physics - Red (Kamikaze: Fast, Agile, High Acceleration)
     RED_MASS: float = 1.0
-    RED_MAX_ACCEL: float = 3.0
+    RED_MAX_ACCEL: float = 2.0
     RED_MAX_SPEED: float = 1.8
     RED_DRAG: float = 0.05
 
     # Physics - Blue (Fugitive: Heavy, Stable, Slow to turn)
-    BLUE_MASS: float = 2.0
-    BLUE_MAX_ACCEL: float = 0.6
-    BLUE_MAX_SPEED: float = 0.4
+    BLUE_MASS: float = 1.0
+    BLUE_MAX_ACCEL: float = 1.0
+    BLUE_MAX_SPEED: float = 0.8
     BLUE_DRAG: float = 0.2
     
     # Data
