@@ -1,6 +1,6 @@
 # Drone RL Training Guide
 
-I have implemented an Imitation Learning (BC) and Reinforcement Learning (RL) pipeline for the Blue agent. This project simulates a "tag" game where a Blue drone learns to evade a Red pursuer.
+Implementation of Imitation Learning (BC) and Reinforcement Learning (RL) pipeline for the Blue agent. This project simulates a "tag" game where a Blue drone learns to evade a Red pursuer.
 
 ## New Files
 - [train_blue.py](file:///train_blue.py): Main script for data collection, BC, and RL.
