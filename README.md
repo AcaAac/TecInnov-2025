@@ -4,11 +4,13 @@ I have implemented an Imitation Learning (BC) and Reinforcement Learning (RL) pi
 
 ## New Files
 - [train_blue.py](file:///train_blue.py): Main script for data collection, BC, and RL.
-- [drone_env.py](file:///drone_env.py): Refactored environment module (shared by sim and trainer).
+- [env/](file:///src/env): Centralized environment package used by both simulation and training.
+- [configs/train.yaml](file:///configs/train.yaml): Default training configuration.
+- [configs/simulate.yaml](file:///configs/simulate.yaml): Default simulation configuration.
 - [ppo.py](file:///ppo.py): PyTorch implementation of PPO (Proximal Policy Optimization) and Neural Network definitions ([ActorCritic](file:///ppo.py#10-69)).
 
 ## Implementation Details
-1.  **Expert Demo Collection**: Runs the heuristic [BlueEvasivePolicy](file:///drone_env.py) to generate a dataset.
+1.  **Expert Demo Collection**: Runs the heuristic `BlueEvasivePolicy` from `src/env/policies.py` to generate a dataset.
 2.  **Behavior Cloning (BC)**: Pre-trains the neural network to mimic the expert's actions.
 3.  **RL Fine-tuning**: Uses PPO to optimize the pre-trained policy against the Red pursuer, maximizing survival time and distance.
 
@@ -31,7 +33,7 @@ conda activate drone_env
 pip install -r requirements.txt
 
 or 
-pip install torch matplotlib pandas numpy
+pip install torch matplotlib pandas numpy pyyaml
 ```
 
 ### Full Pipeline (Recommended)

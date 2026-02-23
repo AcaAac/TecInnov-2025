@@ -25,7 +25,7 @@ except ImportError:
     torch = None
     DEVICE = None
 
-from drone_env import BlueEvasivePolicy, Config, DroneEnv
+from env import BlueEvasivePolicy, DroneEnv, load_env_config
 
 
 def set_global_seed(seed):
@@ -55,7 +55,7 @@ def _ensure_numpy(a):
     return np.asarray(a)
 
 
-def _bc_batch_metrics(agent, bx, by, mode, criterion):
+def _bc_batch_metrics(agent, bx, by, mode, criterion, cfg):
     trunk = agent.model.trunk(bx)
 
     if mode == "DISCRETE":
@@ -65,10 +65,10 @@ def _bc_batch_metrics(agent, bx, by, mode, criterion):
         return loss, accuracy
 
     preds = torch.tanh(agent.model.actor_mean(trunk))
-    target = torch.clamp(by / Config.BLUE_MAX_ACCEL, -1.0, 1.0)
+    target = torch.clamp(by / cfg.BLUE_MAX_ACCEL, -1.0, 1.0)
     loss = criterion(preds, target)
 
-    pred_action = preds * Config.BLUE_MAX_ACCEL
+    pred_action = preds * cfg.BLUE_MAX_ACCEL
     mae = torch.mean(torch.abs(pred_action - by))
     return loss, mae
 
@@ -176,10 +176,10 @@ def plot_rl_training_results(log_df, output_dir, mode):
 
 # --- Step 1: Collect Demonstrations ---
 
-def collect_demonstrations(mode, num_episodes, output_dir):
+def collect_demonstrations(mode, num_episodes, output_dir, cfg):
     print(f"Collecting {num_episodes} Expert demos in {mode} mode...")
-    env = DroneEnv(mode)
-    expert = BlueEvasivePolicy()
+    env = DroneEnv(mode, config=cfg)
+    expert = BlueEvasivePolicy(cfg)
 
     data = []
 
@@ -224,7 +224,17 @@ def collect_demonstrations(mode, num_episodes, output_dir):
 
 # --- Step 2: Behavior Cloning ---
 
-def train_bc(mode, states, actions, output_dir, epochs=50, batch_size=64, val_ratio=0.1, live_plot=False):
+def train_bc(
+    mode,
+    states,
+    actions,
+    output_dir,
+    cfg,
+    epochs=50,
+    batch_size=64,
+    val_ratio=0.1,
+    live_plot=False,
+):
     if torch is None:
         raise RuntimeError("PyTorch is required for behavior cloning.")
 
@@ -288,7 +298,7 @@ def train_bc(mode, states, actions, output_dir, epochs=50, batch_size=64, val_ra
             by = by.to(DEVICE)
 
             optimizer.zero_grad()
-            loss, metric = _bc_batch_metrics(agent, bx, by, mode, criterion)
+            loss, metric = _bc_batch_metrics(agent, bx, by, mode, criterion, cfg)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(agent.model.parameters(), 1.0)
             optimizer.step()
@@ -310,7 +320,7 @@ def train_bc(mode, states, actions, output_dir, epochs=50, batch_size=64, val_ra
                 bx = bx.to(DEVICE)
                 by = by.to(DEVICE)
 
-                loss, metric = _bc_batch_metrics(agent, bx, by, mode, criterion)
+                loss, metric = _bc_batch_metrics(agent, bx, by, mode, criterion, cfg)
                 batch_size_curr = bx.size(0)
                 val_loss_sum += loss.item() * batch_size_curr
                 val_metric_sum += metric.item() * batch_size_curr
@@ -374,6 +384,7 @@ def train_bc(mode, states, actions, output_dir, epochs=50, batch_size=64, val_ra
 
 def train_rl(
     mode,
+    cfg,
     start_agent=None,
     timesteps=100000,
     output_dir="drone_data",
@@ -385,7 +396,7 @@ def train_rl(
 
     print(f"Fine-tuning with PPO ({mode})...")
 
-    env = DroneEnv(mode)
+    env = DroneEnv(mode, config=cfg)
     state_dim = env.get_state_dim()
     action_dim = env.get_action_dim()
 
@@ -439,7 +450,7 @@ def train_rl(
                 act_store = action.item()
             else:
                 act_np = action.detach().cpu().numpy()
-                act_env = act_np * Config.BLUE_MAX_ACCEL
+                act_env = act_np * cfg.BLUE_MAX_ACCEL
                 act_store = act_np
 
             obs, reward, done, info = env.step(act_env)
@@ -519,13 +530,13 @@ def train_rl(
 
 # --- Step 4: Full Evaluation ---
 
-def evaluate_agents(mode, output_dir, visualize=False):
+def evaluate_agents(mode, output_dir, cfg, visualize=False):
     print(f"\nEvaluating Agents ({mode} Mode)...")
-    env = DroneEnv(mode)
+    env = DroneEnv(mode, config=cfg)
     state_dim = env.get_state_dim()
     action_dim = env.get_action_dim()
 
-    agents = {"Expert": BlueEvasivePolicy()}
+    agents = {"Expert": BlueEvasivePolicy(cfg)}
 
     bc_agent = PPOAgent(state_dim, action_dim, mode)
     bc_path = os.path.join(output_dir, f"bc_model_{mode}.pth")
@@ -550,7 +561,7 @@ def evaluate_agents(mode, output_dir, visualize=False):
         _, ax = plt.subplots(figsize=(6, 6))
 
     for name, policy in agents.items():
-        env.seed(Config.SEED)
+        env.seed(cfg.SEED)
         print(f"Testing {name}...")
         for i in range(50):
             obs = env.reset()
@@ -569,7 +580,7 @@ def evaluate_agents(mode, output_dir, visualize=False):
                     if mode == "DISCRETE":
                         act_env = action.item()
                     else:
-                        act_env = action.detach().cpu().numpy() * Config.BLUE_MAX_ACCEL
+                        act_env = action.detach().cpu().numpy() * cfg.BLUE_MAX_ACCEL
 
                 obs_prev = obs
                 obs, _, done, info = env.step(act_env)
@@ -625,7 +636,8 @@ def evaluate_agents(mode, output_dir, visualize=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", type=str, default="CONTINUOUS", choices=["CONTINUOUS", "DISCRETE"])
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--config", type=str, default=None, help="Path to train config YAML")
     parser.add_argument("--collect_demos", action="store_true", help="Step 1: Generate Expert Data")
     parser.add_argument("--train_bc", action="store_true", help="Step 2: Train Behavior Cloning")
     parser.add_argument("--train_rl", action="store_true", help="Step 3: Fine-tune with RL")
@@ -635,16 +647,22 @@ if __name__ == "__main__":
     parser.add_argument("--bc_epochs", type=int, default=30)
     parser.add_argument("--steps_rl", type=int, default=100000)
     parser.add_argument("--steps_per_epoch", type=int, default=2048)
-    parser.add_argument("--output_dir", type=str, default="drone_data")
+    parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--visualize", action="store_true", help="Visualize RL evaluation")
     parser.add_argument("--live_plots", action="store_true", help="Show live training plots during BC and RL")
 
     args = parser.parse_args()
 
-    os.makedirs(args.output_dir, exist_ok=True)
+    overrides = {}
+    if args.seed is not None:
+        overrides["SEED"] = args.seed
+    if args.output_dir is not None:
+        overrides["OUTPUT_DIR"] = args.output_dir
+    cfg = load_env_config(profile="train", config_path=args.config, overrides=overrides)
+    output_dir = cfg.OUTPUT_DIR
 
-    Config.SEED = args.seed
-    set_global_seed(args.seed)
+    os.makedirs(output_dir, exist_ok=True)
+    set_global_seed(cfg.SEED)
 
     if args.all:
         args.collect_demos = True
@@ -656,9 +674,9 @@ if __name__ == "__main__":
         raise RuntimeError("PyTorch is required for --train_bc, --train_rl, and --eval.")
 
     if args.collect_demos:
-        states, actions = collect_demonstrations(args.mode, args.episodes_demo, args.output_dir)
+        states, actions = collect_demonstrations(args.mode, args.episodes_demo, output_dir, cfg)
     elif args.train_bc:
-        pt_path = os.path.join(args.output_dir, f"expert_{args.mode}.pt")
+        pt_path = os.path.join(output_dir, f"expert_{args.mode}.pt")
         if os.path.exists(pt_path):
             data = torch.load(pt_path, map_location="cpu")
             states, actions = data["states"], data["actions"]
@@ -671,7 +689,8 @@ if __name__ == "__main__":
             args.mode,
             states,
             actions,
-            args.output_dir,
+            output_dir,
+            cfg,
             epochs=args.bc_epochs,
             live_plot=args.live_plots,
         )
@@ -679,12 +698,13 @@ if __name__ == "__main__":
     if args.train_rl:
         train_rl(
             args.mode,
+            cfg,
             start_agent=bc_agent,
             timesteps=args.steps_rl,
-            output_dir=args.output_dir,
+            output_dir=output_dir,
             steps_per_epoch=args.steps_per_epoch,
             live_plot=args.live_plots,
         )
 
     if args.eval:
-        evaluate_agents(args.mode, args.output_dir, args.visualize)
+        evaluate_agents(args.mode, output_dir, cfg, args.visualize)
