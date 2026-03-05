@@ -7,6 +7,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from analysis import (
+    build_episode_summary,
+    summarize_policy_eval_figure,
+)
 
 try:
     import torch
@@ -53,6 +57,20 @@ def _ensure_numpy(a):
     if torch is not None and isinstance(a, torch.Tensor):
         return a.detach().cpu().numpy()
     return np.asarray(a)
+
+
+def _extract_positions(env, obs):
+    if env.mode == "DISCRETE":
+        b_pos = env._idx_to_pos(obs["blue"])
+        r_pos = env._idx_to_pos(obs["red"])
+        b_vel = np.zeros(2, dtype=float)
+        r_vel = np.zeros(2, dtype=float)
+    else:
+        b_pos = np.asarray(obs["blue"][0:2], dtype=float)
+        r_pos = np.asarray(obs["red"][0:2], dtype=float)
+        b_vel = np.asarray(obs["blue"][2:4], dtype=float)
+        r_vel = np.asarray(obs["red"][2:4], dtype=float)
+    return b_pos, r_pos, b_vel, r_vel
 
 
 def _bc_batch_metrics(agent, bx, by, mode, criterion, cfg):
@@ -530,7 +548,7 @@ def train_rl(
 
 # --- Step 4: Full Evaluation ---
 
-def evaluate_agents(mode, output_dir, cfg, visualize=False):
+def evaluate_agents(mode, output_dir, cfg, visualize=False, eval_episodes=50):
     print(f"\nEvaluating Agents ({mode} Mode)...")
     env = DroneEnv(mode, config=cfg)
     state_dim = env.get_state_dim()
@@ -554,7 +572,7 @@ def evaluate_agents(mode, output_dir, cfg, visualize=False):
         rl_agent.model.eval()
         agents["BC+RL"] = rl_agent
 
-    results = []
+    step_rows = []
 
     if visualize:
         plt.ion()
@@ -563,10 +581,11 @@ def evaluate_agents(mode, output_dir, cfg, visualize=False):
     for name, policy in agents.items():
         env.seed(cfg.SEED)
         print(f"Testing {name}...")
-        for i in range(50):
+        for i in range(eval_episodes):
             obs = env.reset()
             done = False
-            trajectory = []
+            init_b_pos, init_r_pos, _, _ = _extract_positions(env, obs)
+            init_distance = env.get_distance()
 
             while not done:
                 if name == "Expert":
@@ -584,51 +603,81 @@ def evaluate_agents(mode, output_dir, cfg, visualize=False):
 
                 obs_prev = obs
                 obs, _, done, info = env.step(act_env)
+                distance = float(info.get("distance", env.get_distance()))
+                captured = int(bool(info.get("caught", False)))
+                outcome = str(info.get("outcome", "running"))
+                b_pos, r_pos, b_vel, r_vel = _extract_positions(env, obs_prev)
 
                 if visualize and name == "BC+RL" and i < 5:
                     env.render(ax)
                     plt.pause(0.01)
 
-                trajectory.append(
+                step_rows.append(
                     {
-                        "run_type": name,
+                        "framework": "train_eval",
+                        "policy_name": name,
                         "episode_id": i,
-                        "t": env.t,
-                        "step": env.step_count,
+                        "step": int(env.step_count),
+                        "time": float(env.t),
                         "mode": mode,
-                        "blue_x": obs_prev["blue"][0],
-                        "blue_y": obs_prev["blue"][1],
-                        "red_x": obs_prev["red"][0],
-                        "red_y": obs_prev["red"][1],
-                        "distance": env.get_distance(),
-                        "caught": 1 if info["outcome"] == "caught" else 0,
+                        "blue_x": float(b_pos[0]),
+                        "blue_y": float(b_pos[1]),
+                        "red_x": float(r_pos[0]),
+                        "red_y": float(r_pos[1]),
+                        "blue_vx": float(b_vel[0]),
+                        "blue_vy": float(b_vel[1]),
+                        "red_vx": float(r_vel[0]),
+                        "red_vy": float(r_vel[1]),
+                        "distance": distance,
+                        "captured": captured,
+                        "outcome": outcome,
+                        "init_blue_x": float(init_b_pos[0]),
+                        "init_blue_y": float(init_b_pos[1]),
+                        "init_red_x": float(init_r_pos[0]),
+                        "init_red_y": float(init_r_pos[1]),
+                        "init_distance": float(init_distance),
                     }
                 )
 
-            results.extend(trajectory)
+    step_df = pd.DataFrame(step_rows)
+    step_csv_path = os.path.join(output_dir, f"evaluation_results_{mode}.csv")
+    step_df.to_csv(step_csv_path, index=False)
+    print(f"Saved evaluation step-level results to {step_csv_path}")
 
-    df = pd.DataFrame(results)
-    csv_path = os.path.join(output_dir, f"evaluation_results_{mode}.csv")
-    df.to_csv(csv_path, index=False)
-    print(f"Saved evaluation results to {csv_path}")
+    episode_df = build_episode_summary(step_df, group_cols=("policy_name", "episode_id"))
+    episode_csv_path = os.path.join(output_dir, f"evaluation_episode_summary_{mode}.csv")
+    episode_df.to_csv(episode_csv_path, index=False)
+    print(f"Saved evaluation episode summary to {episode_csv_path}")
 
-    episode_stats = (
-        df.groupby(["run_type", "episode_id"])
-        .agg({"caught": "max", "step": "max", "distance": "min"})
-        .reset_index()
+    summary_plot_path = os.path.join(output_dir, f"evaluation_metrics_{mode}.png")
+    summarize_policy_eval_figure(
+        episode_df,
+        output_path=summary_plot_path,
+        title_prefix=f"{mode} Policy Comparison",
     )
+    print(f"Saved evaluation metrics figure to {summary_plot_path}")
 
-    summary = episode_stats.groupby("run_type").agg(
-        {"caught": "mean", "step": "mean", "distance": "mean"}
-    )
-
-    print("\n--- Results Summary ---")
-    print(summary)
-    print("-----------------------")
+    if not episode_df.empty:
+        summary = (
+            episode_df.groupby("policy_name", as_index=True)
+            .agg(
+                capture_rate=("captured", "mean"),
+                evade_rate=("evaded", "mean"),
+                avg_steps=("steps_to_terminal", "mean"),
+                avg_min_distance=("min_distance", "mean"),
+                median_time_to_capture=("time_to_capture", "median"),
+            )
+            .sort_index()
+        )
+        print("\n--- Results Summary ---")
+        print(summary)
+        print("-----------------------")
 
     if visualize:
         plt.ioff()
         plt.close()
+
+    return step_df, episode_df
 
 
 # --- Main CLI ---
@@ -647,6 +696,7 @@ if __name__ == "__main__":
     parser.add_argument("--bc_epochs", type=int, default=30)
     parser.add_argument("--steps_rl", type=int, default=100000)
     parser.add_argument("--steps_per_epoch", type=int, default=2048)
+    parser.add_argument("--eval_episodes", type=int, default=50)
     parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--visualize", action="store_true", help="Visualize RL evaluation")
     parser.add_argument("--live_plots", action="store_true", help="Show live training plots during BC and RL")
@@ -707,4 +757,10 @@ if __name__ == "__main__":
         )
 
     if args.eval:
-        evaluate_agents(args.mode, output_dir, cfg, args.visualize)
+        evaluate_agents(
+            args.mode,
+            output_dir,
+            cfg,
+            args.visualize,
+            eval_episodes=args.eval_episodes,
+        )

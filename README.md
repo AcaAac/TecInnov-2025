@@ -5,8 +5,10 @@ Implementation of Imitation Learning (BC) and Reinforcement Learning (RL) pipeli
 ## New Files
 - [train_blue.py](file:///train_blue.py): Main script for data collection, BC, and RL.
 - [env/](file:///src/env): Centralized environment package used by both simulation and training.
+- [analysis/](file:///src/analysis): Shared evaluation-metric and visualization utilities.
 - [configs/train.yaml](file:///configs/train.yaml): Default training configuration.
 - [configs/simulate.yaml](file:///configs/simulate.yaml): Default simulation configuration.
+- [notebooks/evaluation_metrics.ipynb](file:///notebooks/evaluation_metrics.ipynb): Advanced evaluation notebook (regime maps, trajectory grids, distributions).
 - [ppo.py](file:///ppo.py): PyTorch implementation of PPO (Proximal Policy Optimization) and Neural Network definitions ([ActorCritic](file:///ppo.py#10-69)).
 
 ## Implementation Details
@@ -71,10 +73,33 @@ python src/train_blue.py --mode CONTINUOUS --train_rl --steps_rl 200000 --steps_
 
 **4. Evaluate Results**
 ```bash
-python src/train_blue.py --mode CONTINUOUS --eval --visualize
+python src/train_blue.py --mode CONTINUOUS --eval --eval_episodes 100 --visualize
 ```
-This will run the **Expert**, **BC**, and **BC+RL** agents against Red and save a comparison CSV to `drone_data/evaluation_results_CONTINUOUS.csv`.
+This will run the **Expert**, **BC**, and **BC+RL** agents against Red and save:
+- step-level CSV: `drone_data/evaluation_results_CONTINUOUS.csv`
+- episode summary CSV: `drone_data/evaluation_episode_summary_CONTINUOUS.csv`
+- evaluation figure: `drone_data/evaluation_metrics_CONTINUOUS.png`
 *   Adds one flag `--visualize` to see the agents in action (matplotlib window).
+
+### Simulation Dataset + Metrics
+```bash
+python src/simulate_drones.py --mode CONTINUOUS --episodes 500
+```
+Outputs:
+- step-level dataset: `drone_data/drone_dataset.csv`
+- episode summary dataset: `drone_data/drone_dataset_episodes.csv`
+- summary figure: `drone_data/simulation_summary.png`
+
+### Advanced Evaluation Notebook
+Open and run:
+- `notebooks/evaluation_metrics.ipynb`
+
+Notebook includes:
+- success rate vs initial-condition distribution
+- time-to-capture distribution
+- phase portrait samples
+- trajectory-grid samples
+- regime map over initial-condition grid
 
 ### Helpful Flags
 

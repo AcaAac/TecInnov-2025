@@ -6,57 +6,123 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from analysis import (
+    build_episode_summary,
+    plot_success_vs_initial_distance,
+    plot_time_to_capture_by_policy,
+)
 from env import BlueEvasivePolicy, DroneEnv, RedPursuitPolicy, load_env_config
 
 
-def run_episode(env, blue_policy, red_policy, episode_id, render_callback=None):
+def _extract_positions(env, obs):
+    if env.mode == "DISCRETE":
+        b_pos = env._idx_to_pos(obs["blue"])
+        r_pos = env._idx_to_pos(obs["red"])
+        b_vel = np.zeros(2, dtype=float)
+        r_vel = np.zeros(2, dtype=float)
+    else:
+        b_pos = np.asarray(obs["blue"][0:2], dtype=float)
+        r_pos = np.asarray(obs["red"][0:2], dtype=float)
+        b_vel = np.asarray(obs["blue"][2:4], dtype=float)
+        r_vel = np.asarray(obs["red"][2:4], dtype=float)
+    return b_pos, r_pos, b_vel, r_vel
+
+
+def run_episode(
+    env,
+    blue_policy,
+    red_policy,
+    episode_id,
+    policy_name="HeuristicBlue",
+    render_callback=None,
+):
     obs = env.reset()
     done = False
     trajectory = []
+
+    init_b_pos, init_r_pos, _, _ = _extract_positions(env, obs)
+    init_distance = env.get_distance()
 
     while not done:
         act_blue = blue_policy.get_action(obs, "blue")
         act_red = red_policy.get_action(obs, "red")
 
-        obs_curr = obs
+        obs_prev = obs
         obs, _, done, info = env.step(act_blue, act_red)
-        caught = bool(info.get("caught", False))
 
-        if env.mode == "DISCRETE":
-            b_pos = env._idx_to_pos(obs_curr["blue"])
-            r_pos = env._idx_to_pos(obs_curr["red"])
-            b_vel = [0.0, 0.0]
-            r_vel = [0.0, 0.0]
-        else:
-            b_pos = obs_curr["blue"][0:2]
-            r_pos = obs_curr["red"][0:2]
-            b_vel = obs_curr["blue"][2:4]
-            r_vel = obs_curr["red"][2:4]
+        b_pos, r_pos, b_vel, r_vel = _extract_positions(env, obs_prev)
+        distance = float(info.get("distance", env.get_distance()))
+        captured = int(bool(info.get("caught", False)))
+        outcome = str(info.get("outcome", "running"))
 
-        dist = float(np.linalg.norm(b_pos - r_pos))
-
-        step_data = {
-            "episode_id": episode_id,
-            "step": env.step_count,
-            "time": env.t,
-            "mode": env.mode,
-            "blue_x": float(b_pos[0]),
-            "blue_y": float(b_pos[1]),
-            "red_x": float(r_pos[0]),
-            "red_y": float(r_pos[1]),
-            "blue_vx": float(b_vel[0]),
-            "blue_vy": float(b_vel[1]),
-            "red_vx": float(r_vel[0]),
-            "red_vy": float(r_vel[1]),
-            "distance": dist,
-            "caught": caught,
-        }
-        trajectory.append(step_data)
+        trajectory.append(
+            {
+                "framework": "simulate",
+                "policy_name": policy_name,
+                "episode_id": int(episode_id),
+                "step": int(env.step_count),
+                "time": float(env.t),
+                "mode": env.mode,
+                "blue_x": float(b_pos[0]),
+                "blue_y": float(b_pos[1]),
+                "red_x": float(r_pos[0]),
+                "red_y": float(r_pos[1]),
+                "blue_vx": float(b_vel[0]),
+                "blue_vy": float(b_vel[1]),
+                "red_vx": float(r_vel[0]),
+                "red_vy": float(r_vel[1]),
+                "distance": distance,
+                "captured": captured,
+                "outcome": outcome,
+                "init_blue_x": float(init_b_pos[0]),
+                "init_blue_y": float(init_b_pos[1]),
+                "init_red_x": float(init_r_pos[0]),
+                "init_red_y": float(init_r_pos[1]),
+                "init_distance": float(init_distance),
+            }
+        )
 
         if render_callback:
             render_callback(b_pos, r_pos)
 
-    return trajectory, caught
+    return trajectory
+
+
+def plot_simulation_summary(episode_df, cfg, output_path):
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+
+    if episode_df.empty:
+        for ax in axes.ravel():
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_axis_off()
+        fig.tight_layout()
+        fig.savefig(output_path)
+        plt.close(fig)
+        return
+
+    axes[0, 0].hist(episode_df["steps_to_terminal"], bins=20, color="skyblue", edgecolor="black")
+    axes[0, 0].set_title("Episode Lengths (steps)")
+    axes[0, 0].set_xlabel("Steps")
+    axes[0, 0].set_ylabel("Count")
+
+    axes[0, 1].hist(episode_df["min_distance"], bins=20, color="salmon", edgecolor="black")
+    axes[0, 1].axvline(cfg.CAPTURE_RADIUS, color="red", linestyle="--", label="Capture Radius")
+    axes[0, 1].set_title("Minimum Distance Distribution")
+    axes[0, 1].set_xlabel("Distance")
+    axes[0, 1].legend()
+
+    plot_time_to_capture_by_policy(episode_df, ax=axes[1, 0], title="Time-to-Capture")
+    plot_success_vs_initial_distance(
+        episode_df,
+        ax=axes[1, 1],
+        n_bins=10,
+        title="Success vs Initial Distance",
+    )
+
+    fig.suptitle("Simulation Evaluation Summary", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.savefig(output_path)
+    plt.close(fig)
 
 
 def run_batch_simulation(num_episodes, mode, cfg, show_anim=False):
@@ -66,7 +132,7 @@ def run_batch_simulation(num_episodes, mode, cfg, show_anim=False):
     blue_pol = BlueEvasivePolicy(cfg, seed=cfg.SEED)
     red_pol = RedPursuitPolicy(cfg)
 
-    all_data = []
+    all_steps = []
 
     if show_anim:
         fig, ax = plt.subplots(figsize=(10, 10))
@@ -104,20 +170,10 @@ def run_batch_simulation(num_episodes, mode, cfg, show_anim=False):
 
     start_time = time.time()
 
-    stats_caught = 0
-    stats_lens = []
-    stats_min_dists = []
-
     for i in range(num_episodes):
         env.seed(cfg.SEED + i)
-
-        traj, caught = run_episode(env, blue_pol, red_pol, i, update_render)
-        all_data.extend(traj)
-
-        stats_caught += int(caught)
-        stats_lens.append(len(traj))
-        dists = [d["distance"] for d in traj]
-        stats_min_dists.append(min(dists))
+        steps = run_episode(env, blue_pol, red_pol, i, render_callback=update_render)
+        all_steps.extend(steps)
 
         if (i + 1) % 50 == 0:
             print(f"Completed {i + 1}/{num_episodes}...")
@@ -126,17 +182,24 @@ def run_batch_simulation(num_episodes, mode, cfg, show_anim=False):
         plt.ioff()
         plt.close()
 
+    step_df = pd.DataFrame(all_steps)
+    episode_df = build_episode_summary(step_df, group_cols=("policy_name", "episode_id"))
+
     duration = time.time() - start_time
     print(f"Simulation finished in {duration:.2f}s")
 
+    capture_rate = float(episode_df["captured"].mean()) if not episode_df.empty else float("nan")
+    avg_steps = float(episode_df["steps_to_terminal"].mean()) if not episode_df.empty else float("nan")
+    avg_min_dist = float(episode_df["min_distance"].mean()) if not episode_df.empty else float("nan")
+
     print("-" * 30)
     print(f"Summary ({mode}):")
-    print(f"Catch Rate: {stats_caught / num_episodes * 100:.1f}%")
-    print(f"Avg Steps: {np.mean(stats_lens):.1f}")
-    print(f"Avg Min Dist: {np.mean(stats_min_dists):.4f}")
+    print(f"Capture Rate: {capture_rate * 100:.1f}%")
+    print(f"Avg Steps: {avg_steps:.1f}")
+    print(f"Avg Min Dist: {avg_min_dist:.4f}")
     print("-" * 30)
 
-    return pd.DataFrame(all_data), stats_lens, stats_min_dists
+    return step_df, episode_df
 
 
 if __name__ == "__main__":
@@ -161,35 +224,28 @@ if __name__ == "__main__":
 
     os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
 
-    df, lens, min_dists = run_batch_simulation(episodes, args.mode, cfg, args.visualize)
+    step_df, episode_df = run_batch_simulation(episodes, args.mode, cfg, args.visualize)
 
-    csv_path = os.path.join(cfg.OUTPUT_DIR, "drone_dataset.csv")
-    df.to_csv(csv_path, index=False)
+    step_csv_path = os.path.join(cfg.OUTPUT_DIR, "drone_dataset.csv")
+    step_df.to_csv(step_csv_path, index=False)
+
+    episodes_csv_path = os.path.join(cfg.OUTPUT_DIR, "drone_dataset_episodes.csv")
+    episode_df.to_csv(episodes_csv_path, index=False)
 
     try:
         import pyarrow  # noqa: F401
 
-        pq_path = os.path.join(cfg.OUTPUT_DIR, "drone_dataset.parquet")
-        df.to_parquet(pq_path, index=False)
-        pq_msg = f"and {pq_path}"
+        step_pq_path = os.path.join(cfg.OUTPUT_DIR, "drone_dataset.parquet")
+        step_df.to_parquet(step_pq_path, index=False)
+
+        episodes_pq_path = os.path.join(cfg.OUTPUT_DIR, "drone_dataset_episodes.parquet")
+        episode_df.to_parquet(episodes_pq_path, index=False)
+        pq_msg = f"and {step_pq_path}, {episodes_pq_path}"
     except ImportError:
         pq_msg = "(PyArrow not found, skipping Parquet)"
 
-    print(f"Dataset saved to: {csv_path} {pq_msg}")
+    print(f"Dataset saved to: {step_csv_path}, {episodes_csv_path} {pq_msg}")
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
-
-    ax1.hist(lens, bins=20, color="skyblue", edgecolor="black")
-    ax1.set_title("Episode Lengths (Steps)")
-    ax1.set_xlabel("Steps")
-
-    ax2.hist(min_dists, bins=20, color="salmon", edgecolor="black")
-    ax2.set_title("Min Distances Achieved")
-    ax2.set_xlabel("Distance")
-    ax2.vlines(cfg.CAPTURE_RADIUS, 0, ax2.get_ylim()[1], colors="r", linestyles="dashed", label="Catch Radius")
-    ax2.legend()
-
-    plt.tight_layout()
     plot_path = os.path.join(cfg.OUTPUT_DIR, "simulation_summary.png")
-    plt.savefig(plot_path)
+    plot_simulation_summary(episode_df, cfg, plot_path)
     print(f"Summary plot saved to: {plot_path}")

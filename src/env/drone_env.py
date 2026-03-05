@@ -34,10 +34,43 @@ class DroneEnv:
     def seed(self, seed: int):
         self.rng = np.random.RandomState(seed)
 
-    def reset(self):
-        self.t = 0.0
-        self.step_count = 0
+    def _continuous_pos(self, value, label: str) -> np.ndarray:
+        arr = np.asarray(value, dtype=np.float64).reshape(-1)
+        if arr.shape[0] != 2:
+            raise ValueError(f"{label} must contain exactly two values.")
+        if np.any(arr < 0.0) or np.any(arr > self.config.ARENA_SIZE):
+            raise ValueError(
+                f"{label} must be inside [0, {self.config.ARENA_SIZE}] for both coordinates."
+            )
+        return arr
 
+    def _continuous_vel(self, value, label: str) -> np.ndarray:
+        arr = np.asarray(value, dtype=np.float64).reshape(-1)
+        if arr.shape[0] != 2:
+            raise ValueError(f"{label} must contain exactly two values.")
+        return arr
+
+    def _discrete_idx(self, value, label: str) -> np.ndarray:
+        arr = np.asarray(value, dtype=np.float64).reshape(-1)
+        if arr.shape[0] != 2:
+            raise ValueError(f"{label} must contain exactly two values.")
+
+        # If values look like continuous coordinates, map to grid indices.
+        if np.any(np.abs(arr - np.round(arr)) > 1e-8):
+            if np.any(arr < 0.0) or np.any(arr > self.config.ARENA_SIZE):
+                raise ValueError(
+                    f"{label} contains non-integer values out of arena bounds [0, {self.config.ARENA_SIZE}]."
+                )
+            return self._pos_to_idx(arr)
+
+        idx = arr.astype(np.int64)
+        if np.any(idx < 0) or np.any(idx >= self.config.GRID_SIZE):
+            raise ValueError(
+                f"{label} indices must be inside [0, {self.config.GRID_SIZE - 1}] for both coordinates."
+            )
+        return idx.astype(np.int64)
+
+    def _sample_random_positions(self) -> tuple:
         for _ in range(100):
             pos_blue = self.rng.rand(2) * self.config.ARENA_SIZE
             pos_red = self.rng.rand(2) * self.config.ARENA_SIZE
@@ -52,14 +85,90 @@ class DroneEnv:
                 dist = np.linalg.norm(diff)
 
             if dist >= self.config.MIN_INIT_DIST:
-                break
+                return pos_blue, pos_red
+
+        return pos_blue, pos_red
+
+    def reset(
+        self,
+        initial_blue_pos=None,
+        initial_red_pos=None,
+        initial_blue_vel=None,
+        initial_red_vel=None,
+        skip_min_dist_check: bool = False,
+    ):
+        self.t = 0.0
+        self.step_count = 0
 
         if self.mode == "DISCRETE":
-            self.blue_state = self._pos_to_idx(pos_blue)
-            self.red_state = self._pos_to_idx(pos_red)
+            if initial_blue_vel is not None or initial_red_vel is not None:
+                raise ValueError("Velocities are not part of DISCRETE mode state.")
+
+            sampled_blue, sampled_red = self._sample_random_positions()
+            blue_idx = (
+                self._discrete_idx(initial_blue_pos, "initial_blue_pos")
+                if initial_blue_pos is not None
+                else self._pos_to_idx(sampled_blue)
+            )
+            red_idx = (
+                self._discrete_idx(initial_red_pos, "initial_red_pos")
+                if initial_red_pos is not None
+                else self._pos_to_idx(sampled_red)
+            )
+
+            if not skip_min_dist_check:
+                p_blue = self._idx_to_pos(blue_idx)
+                p_red = self._idx_to_pos(red_idx)
+                if self.config.WALLS_MODE:
+                    sep = np.linalg.norm(p_blue - p_red)
+                else:
+                    diff = p_blue - p_red
+                    for i in range(2):
+                        if abs(diff[i]) > self.config.ARENA_SIZE / 2:
+                            diff[i] = self.config.ARENA_SIZE - abs(diff[i])
+                    sep = np.linalg.norm(diff)
+                if sep < self.config.MIN_INIT_DIST:
+                    raise ValueError("Provided discrete initial states violate MIN_INIT_DIST.")
+
+            self.blue_state = blue_idx.astype(np.int64)
+            self.red_state = red_idx.astype(np.int64)
         else:
-            self.blue_state = np.array([pos_blue[0], pos_blue[1], 0.0, 0.0], dtype=np.float64)
-            self.red_state = np.array([pos_red[0], pos_red[1], 0.0, 0.0], dtype=np.float64)
+            sampled_blue, sampled_red = self._sample_random_positions()
+            pos_blue = (
+                self._continuous_pos(initial_blue_pos, "initial_blue_pos")
+                if initial_blue_pos is not None
+                else sampled_blue
+            )
+            pos_red = (
+                self._continuous_pos(initial_red_pos, "initial_red_pos")
+                if initial_red_pos is not None
+                else sampled_red
+            )
+            vel_blue = (
+                self._continuous_vel(initial_blue_vel, "initial_blue_vel")
+                if initial_blue_vel is not None
+                else np.zeros(2, dtype=np.float64)
+            )
+            vel_red = (
+                self._continuous_vel(initial_red_vel, "initial_red_vel")
+                if initial_red_vel is not None
+                else np.zeros(2, dtype=np.float64)
+            )
+
+            if not skip_min_dist_check:
+                if self.config.WALLS_MODE:
+                    sep = np.linalg.norm(pos_blue - pos_red)
+                else:
+                    diff = pos_blue - pos_red
+                    for i in range(2):
+                        if abs(diff[i]) > self.config.ARENA_SIZE / 2:
+                            diff[i] = self.config.ARENA_SIZE - abs(diff[i])
+                    sep = np.linalg.norm(diff)
+                if sep < self.config.MIN_INIT_DIST:
+                    raise ValueError("Provided continuous initial states violate MIN_INIT_DIST.")
+
+            self.blue_state = np.array([pos_blue[0], pos_blue[1], vel_blue[0], vel_blue[1]], dtype=np.float64)
+            self.red_state = np.array([pos_red[0], pos_red[1], vel_red[0], vel_red[1]], dtype=np.float64)
 
         return self._get_obs()
 
