@@ -601,12 +601,12 @@ def evaluate_agents(mode, output_dir, cfg, visualize=False, eval_episodes=50):
                     else:
                         act_env = action.detach().cpu().numpy() * cfg.BLUE_MAX_ACCEL
 
-                obs_prev = obs
                 obs, _, done, info = env.step(act_env)
                 distance = float(info.get("distance", env.get_distance()))
                 captured = int(bool(info.get("caught", False)))
                 outcome = str(info.get("outcome", "running"))
-                b_pos, r_pos, b_vel, r_vel = _extract_positions(env, obs_prev)
+                # Log post-step state so position, step/time, and info metrics are aligned.
+                b_pos, r_pos, b_vel, r_vel = _extract_positions(env, obs)
 
                 if visualize and name == "BC+RL" and i < 5:
                     env.render(ax)

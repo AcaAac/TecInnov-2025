@@ -133,15 +133,17 @@ class BlueEvasivePolicy(AgentPolicy):
 
         force_wall = np.zeros(2)
         if self.config.WALLS_MODE:
-            margin = 0.2
+            arena = float(self.config.ARENA_SIZE)
+            margin = 0.2 * arena
+            eps = 0.1 * arena
             if p_blue[0] < margin:
-                force_wall[0] += 1.0 / (p_blue[0] + 0.1)
-            if p_blue[0] > 1.0 - margin:
-                force_wall[0] -= 1.0 / (1.0 - p_blue[0] + 0.1)
+                force_wall[0] += 1.0 / (p_blue[0] + eps)
+            if p_blue[0] > arena - margin:
+                force_wall[0] -= 1.0 / (arena - p_blue[0] + eps)
             if p_blue[1] < margin:
-                force_wall[1] += 1.0 / (p_blue[1] + 0.1)
-            if p_blue[1] > 1.0 - margin:
-                force_wall[1] -= 1.0 / (1.0 - p_blue[1] + 0.1)
+                force_wall[1] += 1.0 / (p_blue[1] + eps)
+            if p_blue[1] > arena - margin:
+                force_wall[1] -= 1.0 / (arena - p_blue[1] + eps)
 
         juke_force = np.zeros(2)
         if dist < 0.25:

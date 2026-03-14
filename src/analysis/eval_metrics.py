@@ -219,17 +219,16 @@ def run_initial_condition_grid(
             while not done and env.step_count < max_steps:
                 act_blue = blue_policy.get_action(obs, "blue")
                 act_red = red_policy.get_action(obs, "red")
-                obs_prev = obs
                 obs, _, done, info = env.step(act_blue, act_red)
 
                 step_rows.append(
                     {
                         "step": env.step_count,
                         "time": env.t,
-                        "blue_x": float(obs_prev["blue"][0]),
-                        "blue_y": float(obs_prev["blue"][1]),
-                        "red_x": float(obs_prev["red"][0]),
-                        "red_y": float(obs_prev["red"][1]),
+                        "blue_x": float(obs["blue"][0]),
+                        "blue_y": float(obs["blue"][1]),
+                        "red_x": float(obs["red"][0]),
+                        "red_y": float(obs["red"][1]),
                         "distance": float(info.get("distance", env.get_distance())),
                         "captured": int(info.get("caught", False)),
                         "outcome": info.get("outcome", "running"),

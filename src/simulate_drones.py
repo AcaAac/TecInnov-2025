@@ -47,10 +47,10 @@ def run_episode(
         act_blue = blue_policy.get_action(obs, "blue")
         act_red = red_policy.get_action(obs, "red")
 
-        obs_prev = obs
         obs, _, done, info = env.step(act_blue, act_red)
 
-        b_pos, r_pos, b_vel, r_vel = _extract_positions(env, obs_prev)
+        # Log post-step state so position, step/time, and info metrics are aligned.
+        b_pos, r_pos, b_vel, r_vel = _extract_positions(env, obs)
         distance = float(info.get("distance", env.get_distance()))
         captured = int(bool(info.get("caught", False)))
         outcome = str(info.get("outcome", "running"))

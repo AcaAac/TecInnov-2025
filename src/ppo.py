@@ -60,6 +60,11 @@ class ActorCritic(nn.Module):
                 action = dist.loc
         else:
             action = dist.sample()
+
+        # Keep continuous actions inside the normalized action box so rollout
+        # actions and PPO log-probs are computed on the same executed action.
+        if self.mode != 'DISCRETE':
+            action = torch.clamp(action, -1.0, 1.0)
             
         log_prob = dist.log_prob(action)
         if self.mode != 'DISCRETE':

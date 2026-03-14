@@ -273,7 +273,11 @@ class DroneEnv:
             drag = self.config.BLUE_DRAG
             mass = self.config.BLUE_MASS
 
-        action = np.asarray(action, dtype=np.float64)
+        action = np.asarray(action, dtype=np.float64).reshape(-1)
+        if action.shape[0] != 2:
+            raise ValueError(f"{agent_type} action must contain exactly two values.")
+        if not np.all(np.isfinite(action)):
+            raise ValueError(f"{agent_type} action must contain only finite values.")
         force = np.clip(action, -max_acc, max_acc)
         acc = force / mass
 
