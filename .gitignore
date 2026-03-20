@@ -3,7 +3,8 @@ __pycache__/
 *.pyc
 
 # Data
-drone_data/
+# ignore specific and variant drone data folders
+drone_data*
 *.csv
 *.parquet
 *.pt
@@ -14,6 +15,11 @@ drone_data/
 # IDE
 .vscode/
 .idea/
+
+# Python virtual env
+.venv/
+.venv_drone/
+.venv*
 
 # System
 .DS_Store
