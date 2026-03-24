@@ -4,9 +4,19 @@ import numpy as np
 
 from .config_loader import EnvConfig, load_env_config
 from .policies import AgentPolicy, RedPursuitPolicy
+from .vtol import PlanarVTOLDynamics, VTOLDrone, VelocityTrackingController, toroidal_displacement
 
 
 class DroneEnv:
+    """Pursuit/evasion environment with DISCRETE and CONTINUOUS dynamics.
+
+    DISCRETE mode keeps the grid-world transition model.
+    CONTINUOUS mode uses a planar linearized VTOL backend per drone:
+      1) high-level command (desired velocity or low-level VTOL input),
+      2) low-level velocity-tracking control (if desired velocity provided),
+      3) discrete linear VTOL propagation.
+    """
+
     def __init__(
         self,
         mode: str = "CONTINUOUS",
@@ -30,6 +40,48 @@ class DroneEnv:
         self.rng = np.random.RandomState(self.config.SEED)
         self.cell_size = self.config.ARENA_SIZE / self.config.GRID_SIZE
         self.red_policy = red_policy or RedPursuitPolicy(self.config)
+
+        self._vtol_dynamics = None
+        self._vtol_controller = None
+        self.blue_drone: Optional[VTOLDrone] = None
+        self.red_drone: Optional[VTOLDrone] = None
+        if self.mode == "CONTINUOUS":
+            self._init_vtol_backend()
+
+    def _init_vtol_backend(self):
+        self._vtol_dynamics = PlanarVTOLDynamics(
+            m=self.config.M,
+            Iy=self.config.IY,
+            g=self.config.G,
+            dt=self.config.DT,
+            exact_discretization=False,
+        )
+        self._vtol_controller = VelocityTrackingController(
+            m=self.config.M,
+            g=self.config.G,
+            theta_max=self.config.THETA_MAX,
+            dT_min=self.config.DT_MIN,
+            dT_max=self.config.DT_MAX,
+            tau_min=self.config.TAU_MIN,
+            tau_max=self.config.TAU_MAX,
+            Kv=self.config.KV,
+            Ktheta=self.config.KTHETA,
+            Kq=self.config.KQ,
+        )
+        self.blue_drone = VTOLDrone(
+            name="blue",
+            config=self.config,
+            dynamics=self._vtol_dynamics,
+            controller=self._vtol_controller,
+            v_max=self.config.V_BLUE_MAX,
+        )
+        self.red_drone = VTOLDrone(
+            name="red",
+            config=self.config,
+            dynamics=self._vtol_dynamics,
+            controller=self._vtol_controller,
+            v_max=self.config.V_RED_MAX,
+        )
 
     def seed(self, seed: int):
         self.rng = np.random.RandomState(seed)
@@ -70,20 +122,23 @@ class DroneEnv:
             )
         return idx.astype(np.int64)
 
+    def _pair_distance(self, p_blue: np.ndarray, p_red: np.ndarray) -> float:
+        if self.config.WALLS_MODE:
+            return float(np.linalg.norm(p_blue - p_red))
+
+        diff = toroidal_displacement(
+            target_pos=p_blue,
+            my_pos=p_red,
+            arena_size=self.config.ARENA_SIZE,
+            walls_mode=False,
+        )
+        return float(np.linalg.norm(diff))
+
     def _sample_random_positions(self) -> tuple:
         for _ in range(100):
             pos_blue = self.rng.rand(2) * self.config.ARENA_SIZE
             pos_red = self.rng.rand(2) * self.config.ARENA_SIZE
-
-            if self.config.WALLS_MODE:
-                dist = np.linalg.norm(pos_blue - pos_red)
-            else:
-                diff = pos_blue - pos_red
-                for i in range(2):
-                    if abs(diff[i]) > self.config.ARENA_SIZE / 2:
-                        diff[i] = self.config.ARENA_SIZE - abs(diff[i])
-                dist = np.linalg.norm(diff)
-
+            dist = self._pair_distance(pos_blue, pos_red)
             if dist >= self.config.MIN_INIT_DIST:
                 return pos_blue, pos_red
 
@@ -119,14 +174,7 @@ class DroneEnv:
             if not skip_min_dist_check:
                 p_blue = self._idx_to_pos(blue_idx)
                 p_red = self._idx_to_pos(red_idx)
-                if self.config.WALLS_MODE:
-                    sep = np.linalg.norm(p_blue - p_red)
-                else:
-                    diff = p_blue - p_red
-                    for i in range(2):
-                        if abs(diff[i]) > self.config.ARENA_SIZE / 2:
-                            diff[i] = self.config.ARENA_SIZE - abs(diff[i])
-                    sep = np.linalg.norm(diff)
+                sep = self._pair_distance(p_blue, p_red)
                 if sep < self.config.MIN_INIT_DIST:
                     raise ValueError("Provided discrete initial states violate MIN_INIT_DIST.")
 
@@ -156,19 +204,18 @@ class DroneEnv:
             )
 
             if not skip_min_dist_check:
-                if self.config.WALLS_MODE:
-                    sep = np.linalg.norm(pos_blue - pos_red)
-                else:
-                    diff = pos_blue - pos_red
-                    for i in range(2):
-                        if abs(diff[i]) > self.config.ARENA_SIZE / 2:
-                            diff[i] = self.config.ARENA_SIZE - abs(diff[i])
-                    sep = np.linalg.norm(diff)
+                sep = self._pair_distance(pos_blue, pos_red)
                 if sep < self.config.MIN_INIT_DIST:
                     raise ValueError("Provided continuous initial states violate MIN_INIT_DIST.")
 
-            self.blue_state = np.array([pos_blue[0], pos_blue[1], vel_blue[0], vel_blue[1]], dtype=np.float64)
-            self.red_state = np.array([pos_red[0], pos_red[1], vel_red[0], vel_red[1]], dtype=np.float64)
+            # VTOL state: [px, pz, vx, vz, theta, q]
+            blue_init = np.array([pos_blue[0], pos_blue[1], vel_blue[0], vel_blue[1], 0.0, 0.0], dtype=np.float64)
+            red_init = np.array([pos_red[0], pos_red[1], vel_red[0], vel_red[1], 0.0, 0.0], dtype=np.float64)
+
+            self.blue_drone.set_state(blue_init)
+            self.red_drone.set_state(red_init)
+            self.blue_state = self.blue_drone.state.copy()
+            self.red_state = self.red_drone.state.copy()
 
         return self._get_obs()
 
@@ -211,8 +258,8 @@ class DroneEnv:
             self.blue_state = self._step_discrete(self.blue_state, int(action_blue))
             self.red_state = self._step_discrete(self.red_state, int(action_red))
         else:
-            self.blue_state = self._step_continuous(self.blue_state, action_blue, "blue")
-            self.red_state = self._step_continuous(self.red_state, action_red, "red")
+            self.blue_state = self._step_continuous(self.blue_drone, action_blue)
+            self.red_state = self._step_continuous(self.red_drone, action_red)
 
         self.t += self.config.DT
         self.step_count += 1
@@ -258,51 +305,46 @@ class DroneEnv:
             ny = (y + dy) % self.config.GRID_SIZE
         return np.array([nx, ny])
 
-    def _step_continuous(self, state: np.ndarray, action, agent_type: str) -> np.ndarray:
-        pos = state[0:2]
-        vel = state[2:4]
+    def _parse_continuous_action(self, action) -> tuple[str, np.ndarray]:
+        """Parse continuous command as desired velocity or low-level VTOL input.
 
-        if agent_type == "red":
-            max_acc = self.config.RED_MAX_ACCEL
-            max_spd = self.config.RED_MAX_SPEED
-            drag = self.config.RED_DRAG
-            mass = self.config.RED_MASS
+        Supported formats:
+        - np.ndarray/list with shape (2,) -> desired planar velocity [vx_des, vz_des]
+        - {"desired_velocity": [vx_des, vz_des]} or {"v_des": ...}
+        - {"low_level": [dT, tau]} or {"u": ...}
+        """
+        if isinstance(action, dict):
+            if "desired_velocity" in action:
+                arr = np.asarray(action["desired_velocity"], dtype=np.float64).reshape(-1)
+                kind = "desired_velocity"
+            elif "v_des" in action:
+                arr = np.asarray(action["v_des"], dtype=np.float64).reshape(-1)
+                kind = "desired_velocity"
+            elif "low_level" in action:
+                arr = np.asarray(action["low_level"], dtype=np.float64).reshape(-1)
+                kind = "low_level"
+            elif "u" in action:
+                arr = np.asarray(action["u"], dtype=np.float64).reshape(-1)
+                kind = "low_level"
+            else:
+                raise ValueError("Continuous action dict must include desired_velocity/v_des or low_level/u.")
         else:
-            max_acc = self.config.BLUE_MAX_ACCEL
-            max_spd = self.config.BLUE_MAX_SPEED
-            drag = self.config.BLUE_DRAG
-            mass = self.config.BLUE_MASS
+            arr = np.asarray(action, dtype=np.float64).reshape(-1)
+            kind = "desired_velocity"
 
-        action = np.asarray(action, dtype=np.float64).reshape(-1)
-        if action.shape[0] != 2:
-            raise ValueError(f"{agent_type} action must contain exactly two values.")
-        if not np.all(np.isfinite(action)):
-            raise ValueError(f"{agent_type} action must contain only finite values.")
-        force = np.clip(action, -max_acc, max_acc)
-        acc = force / mass
+        if arr.shape[0] != 2:
+            raise ValueError("Continuous action must contain exactly two values.")
+        if not np.all(np.isfinite(arr)):
+            raise ValueError("Continuous action must contain only finite values.")
+        return kind, arr
 
-        vel += acc * self.config.DT
-        vel *= 1.0 - drag * self.config.DT
-
-        speed = np.linalg.norm(vel)
-        if speed > max_spd:
-            vel = vel / speed * max_spd
-
-        pos += vel * self.config.DT
-
-        if self.config.WALLS_MODE:
-            for i in range(2):
-                if pos[i] < 0:
-                    pos[i] = 0
-                    vel[i] = 0
-                elif pos[i] > self.config.ARENA_SIZE:
-                    pos[i] = self.config.ARENA_SIZE
-                    vel[i] = 0
+    def _step_continuous(self, drone: VTOLDrone, action) -> np.ndarray:
+        kind, cmd = self._parse_continuous_action(action)
+        if kind == "desired_velocity":
+            state = drone.step(desired_velocity=cmd)
         else:
-            for i in range(2):
-                pos[i] = pos[i] % self.config.ARENA_SIZE
-
-        return np.array([pos[0], pos[1], vel[0], vel[1]], dtype=np.float64)
+            state = drone.step(low_level=cmd)
+        return state
 
     def get_distance(self) -> float:
         if self.mode == "DISCRETE":
@@ -312,14 +354,7 @@ class DroneEnv:
             p1 = self.blue_state[0:2]
             p2 = self.red_state[0:2]
 
-        if self.config.WALLS_MODE:
-            return float(np.linalg.norm(p1 - p2))
-
-        diff = p1 - p2
-        for i in range(2):
-            if abs(diff[i]) > self.config.ARENA_SIZE / 2:
-                diff[i] = self.config.ARENA_SIZE - abs(diff[i])
-        return float(np.linalg.norm(diff))
+        return self._pair_distance(p1, p2)
 
     def _get_obs(self):
         return {
@@ -337,11 +372,12 @@ class DroneEnv:
             r = 2.0 * (obs["red"] / self.config.GRID_SIZE) - 1.0
             return np.concatenate([b, r], dtype=np.float32)
 
+        # Keep policy observation in position/velocity channels for compatibility.
         b_pos = 2.0 * (obs["blue"][0:2] / self.config.ARENA_SIZE) - 1.0
-        b_vel = obs["blue"][2:4] / self.config.BLUE_MAX_SPEED
+        b_vel = obs["blue"][2:4] / max(self.config.V_BLUE_MAX, 1e-9)
 
         r_pos = 2.0 * (obs["red"][0:2] / self.config.ARENA_SIZE) - 1.0
-        r_vel = obs["red"][2:4] / self.config.RED_MAX_SPEED
+        r_vel = obs["red"][2:4] / max(self.config.V_RED_MAX, 1e-9)
 
         return np.concatenate([b_pos, b_vel, r_pos, r_vel], dtype=np.float32)
 
@@ -349,6 +385,8 @@ class DroneEnv:
         return 4 if self.mode == "DISCRETE" else 8
 
     def get_action_dim(self) -> int:
+        # Continuous action = desired planar velocity by default.
+        # Low-level VTOL command path has same dimensionality (2).
         return 9 if self.mode == "DISCRETE" else 2
 
     def render(self, ax=None):

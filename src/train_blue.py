@@ -83,10 +83,10 @@ def _bc_batch_metrics(agent, bx, by, mode, criterion, cfg):
         return loss, accuracy
 
     preds = torch.tanh(agent.model.actor_mean(trunk))
-    target = torch.clamp(by / cfg.BLUE_MAX_ACCEL, -1.0, 1.0)
+    target = torch.clamp(by / cfg.V_BLUE_MAX, -1.0, 1.0)
     loss = criterion(preds, target)
 
-    pred_action = preds * cfg.BLUE_MAX_ACCEL
+    pred_action = preds * cfg.V_BLUE_MAX
     mae = torch.mean(torch.abs(pred_action - by))
     return loss, mae
 
@@ -468,7 +468,7 @@ def train_rl(
                 act_store = action.item()
             else:
                 act_np = action.detach().cpu().numpy()
-                act_env = act_np * cfg.BLUE_MAX_ACCEL
+                act_env = act_np * cfg.V_BLUE_MAX
                 act_store = act_np
 
             obs, reward, done, info = env.step(act_env)
@@ -599,7 +599,7 @@ def evaluate_agents(mode, output_dir, cfg, visualize=False, eval_episodes=50):
                     if mode == "DISCRETE":
                         act_env = action.item()
                     else:
-                        act_env = action.detach().cpu().numpy() * cfg.BLUE_MAX_ACCEL
+                        act_env = action.detach().cpu().numpy() * cfg.V_BLUE_MAX
 
                 obs, _, done, info = env.step(act_env)
                 distance = float(info.get("distance", env.get_distance()))

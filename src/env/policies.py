@@ -3,6 +3,7 @@ from typing import Any, Optional
 import numpy as np
 
 from .config_loader import EnvConfig
+from .vtol import normalize, toroidal_displacement
 
 
 def _get_toroidal_displacement(
@@ -11,21 +12,26 @@ def _get_toroidal_displacement(
     config: EnvConfig,
     mode: str = "CONTINUOUS",
 ) -> np.ndarray:
-    diff = target_pos - my_pos
+    if mode == "DISCRETE":
+        diff = target_pos - my_pos
+        if config.WALLS_MODE:
+            return diff
 
-    if config.WALLS_MODE:
+        boundary = float(config.GRID_SIZE)
+        half_boundary = boundary / 2.0
+        for i in range(2):
+            if diff[i] > half_boundary:
+                diff[i] -= boundary
+            elif diff[i] < -half_boundary:
+                diff[i] += boundary
         return diff
 
-    boundary = config.GRID_SIZE if mode == "DISCRETE" else config.ARENA_SIZE
-    half_boundary = boundary / 2.0
-
-    for i in range(2):
-        if diff[i] > half_boundary:
-            diff[i] -= boundary
-        elif diff[i] < -half_boundary:
-            diff[i] += boundary
-
-    return diff
+    return toroidal_displacement(
+        target_pos=target_pos,
+        my_pos=my_pos,
+        arena_size=config.ARENA_SIZE,
+        walls_mode=config.WALLS_MODE,
+    )
 
 
 class AgentPolicy:
@@ -61,19 +67,14 @@ class RedPursuitPolicy(AgentPolicy):
             }
             return mapping.get((dx, dy), 0)
 
+        # Option B guidance: output desired planar velocity toward Blue.
         my_state = obs["red"]
         target_state = obs["blue"]
+        p_red = np.asarray(my_state[0:2], dtype=np.float64)
+        p_blue = np.asarray(target_state[0:2], dtype=np.float64)
 
-        p_red = my_state[0:2]
-        v_red = my_state[2:4]
-        p_blue = target_state[0:2]
-        v_blue = target_state[2:4]
-
-        error_pos = _get_toroidal_displacement(p_blue, p_red, self.config, mode="CONTINUOUS")
-        error_vel = v_blue - v_red
-        kp = 7.0
-        kd = 1.0
-        return kp * error_pos + kd * error_vel
+        to_blue = _get_toroidal_displacement(p_blue, p_red, self.config, mode="CONTINUOUS")
+        return self.config.V_RED_MAX * normalize(to_blue)
 
 
 class BlueEvasivePolicy(AgentPolicy):
@@ -120,36 +121,44 @@ class BlueEvasivePolicy(AgentPolicy):
             dy = np.clip(dy, -1, 1)
             return mapping.get((dx, dy), 0)
 
+        # Option B guidance: output desired planar velocity for evasion.
         my_state = obs["blue"]
         opp_state = obs["red"]
 
-        p_blue = my_state[0:2]
-        p_red = opp_state[0:2]
+        p_blue = np.asarray(my_state[0:2], dtype=np.float64)
+        p_red = np.asarray(opp_state[0:2], dtype=np.float64)
 
-        diff = _get_toroidal_displacement(p_blue, p_red, self.config, mode="CONTINUOUS")
-        dist = np.linalg.norm(diff) + 1e-6
-        repulse_dir = diff / dist
-        force_red = repulse_dir * (0.5 / dist)
+        rel = _get_toroidal_displacement(p_blue, p_red, self.config, mode="CONTINUOUS")
+        dist = np.linalg.norm(rel)
+        escape_dir = normalize(rel)
 
-        force_wall = np.zeros(2)
+        beta = 1.0
+        base_escape = beta * escape_dir
+
+        wall_term = np.zeros(2, dtype=np.float64)
         if self.config.WALLS_MODE:
             arena = float(self.config.ARENA_SIZE)
             margin = 0.2 * arena
-            eps = 0.1 * arena
+            gain = float(self.config.WALL_AVOIDANCE_GAIN)
             if p_blue[0] < margin:
-                force_wall[0] += 1.0 / (p_blue[0] + eps)
+                wall_term[0] += gain * (margin - p_blue[0]) / max(margin, 1e-9)
             if p_blue[0] > arena - margin:
-                force_wall[0] -= 1.0 / (arena - p_blue[0] + eps)
+                wall_term[0] -= gain * (p_blue[0] - (arena - margin)) / max(margin, 1e-9)
             if p_blue[1] < margin:
-                force_wall[1] += 1.0 / (p_blue[1] + eps)
+                wall_term[1] += gain * (margin - p_blue[1]) / max(margin, 1e-9)
             if p_blue[1] > arena - margin:
-                force_wall[1] -= 1.0 / (arena - p_blue[1] + eps)
+                wall_term[1] -= gain * (p_blue[1] - (arena - margin)) / max(margin, 1e-9)
 
-        juke_force = np.zeros(2)
-        if dist < 0.25:
-            perp = np.array([-repulse_dir[1], repulse_dir[0]])
+        juke_term = np.zeros(2, dtype=np.float64)
+        if dist < self.config.JUKE_DISTANCE_THRESHOLD and np.linalg.norm(escape_dir) > 1e-9:
+            perp = np.array([-escape_dir[1], escape_dir[0]], dtype=np.float64)
             if self.rng.rand() > 0.5:
-                perp *= -1
-            juke_force = perp * 2.5
+                perp *= -1.0
+            closeness = 1.0 - dist / max(self.config.JUKE_DISTANCE_THRESHOLD, 1e-9)
+            juke_term = perp * max(0.0, closeness)
 
-        return force_red + force_wall * 0.1 + juke_force
+        vec = base_escape + wall_term + juke_term
+        direction = normalize(vec)
+        if np.linalg.norm(direction) < 1e-9:
+            direction = escape_dir
+        return self.config.V_BLUE_MAX * direction

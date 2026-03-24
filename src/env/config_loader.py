@@ -14,14 +14,21 @@ class EnvConfig:
     CAPTURE_RADIUS: float
     MIN_INIT_DIST: float
     WALLS_MODE: bool
-    RED_MASS: float
-    RED_MAX_ACCEL: float
-    RED_MAX_SPEED: float
-    RED_DRAG: float
-    BLUE_MASS: float
-    BLUE_MAX_ACCEL: float
-    BLUE_MAX_SPEED: float
-    BLUE_DRAG: float
+    M: float
+    IY: float
+    G: float
+    THETA_MAX: float
+    DT_MIN: float
+    DT_MAX: float
+    TAU_MIN: float
+    TAU_MAX: float
+    KV: float
+    KTHETA: float
+    KQ: float
+    V_RED_MAX: float
+    V_BLUE_MAX: float
+    JUKE_DISTANCE_THRESHOLD: float
+    WALL_AVOIDANCE_GAIN: float
     NUM_EPISODES: int
     OUTPUT_DIR: str
     SEED: int
@@ -39,14 +46,21 @@ _SCHEMA: Dict[str, type] = {
     "CAPTURE_RADIUS": float,
     "MIN_INIT_DIST": float,
     "WALLS_MODE": bool,
-    "RED_MASS": float,
-    "RED_MAX_ACCEL": float,
-    "RED_MAX_SPEED": float,
-    "RED_DRAG": float,
-    "BLUE_MASS": float,
-    "BLUE_MAX_ACCEL": float,
-    "BLUE_MAX_SPEED": float,
-    "BLUE_DRAG": float,
+    "M": float,
+    "IY": float,
+    "G": float,
+    "THETA_MAX": float,
+    "DT_MIN": float,
+    "DT_MAX": float,
+    "TAU_MIN": float,
+    "TAU_MAX": float,
+    "KV": float,
+    "KTHETA": float,
+    "KQ": float,
+    "V_RED_MAX": float,
+    "V_BLUE_MAX": float,
+    "JUKE_DISTANCE_THRESHOLD": float,
+    "WALL_AVOIDANCE_GAIN": float,
     "NUM_EPISODES": int,
     "OUTPUT_DIR": str,
     "SEED": int,
