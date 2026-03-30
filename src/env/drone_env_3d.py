@@ -9,6 +9,18 @@ from .kinematics_3d import KinematicDrone3D, euclidean_distance
 from .policies_3d import AgentPolicy, EvaderPolicy3D, PursuerPolicy3D
 
 
+def _draw_capture_wireframe(ax, center: np.ndarray, radius: float, color: str = "red") -> None:
+    theta = np.linspace(0.0, 2.0 * np.pi, 16)
+    phi = np.linspace(0.0, np.pi, 10)
+    theta_grid, phi_grid = np.meshgrid(theta, phi)
+
+    x = center[0] + radius * np.cos(theta_grid) * np.sin(phi_grid)
+    y = center[1] + radius * np.sin(theta_grid) * np.sin(phi_grid)
+    z = center[2] + radius * np.cos(phi_grid)
+
+    ax.plot_wireframe(x, y, z, color=color, alpha=0.18, linewidth=0.6, rstride=1, cstride=1)
+
+
 class DroneEnv3D:
     """Continuous 3D pursuit/evasion environment for drone-like kinematics."""
 
@@ -261,6 +273,7 @@ class DroneEnv3D:
             ax.scatter([evader_pos[0]], [evader_pos[1]], [evader_pos[2]], c="blue", s=40, label="Evader")
             ax.scatter([pursuer_pos[0]], [pursuer_pos[1]], [pursuer_pos[2]], c="red", s=40, label="Pursuer")
             ax.plot([evader_pos[0], pursuer_pos[0]], [evader_pos[1], pursuer_pos[1]], [evader_pos[2], pursuer_pos[2]], alpha=0.25, color="gray")
+            _draw_capture_wireframe(ax, pursuer_pos, self.config.CAPTURE_RADIUS)
             ax.set_xlabel("x")
             ax.set_ylabel("y")
             ax.set_zlabel("z")

@@ -11,6 +11,17 @@ from analysis.eval_metrics_3d import plot_trajectory_scatter_3d
 from env import EvaderPolicy3D, DroneEnv3D, PursuerPolicy3D, load_env_config_3d
 
 
+def _draw_capture_wireframe(ax, center, radius, color="red"):
+    theta = np.linspace(0.0, 2.0 * np.pi, 16)
+    phi = np.linspace(0.0, np.pi, 10)
+    theta_grid, phi_grid = np.meshgrid(theta, phi)
+
+    x = center[0] + radius * np.cos(theta_grid) * np.sin(phi_grid)
+    y = center[1] + radius * np.sin(theta_grid) * np.sin(phi_grid)
+    z = center[2] + radius * np.cos(phi_grid)
+    ax.plot_wireframe(x, y, z, color=color, alpha=0.18, linewidth=0.6, rstride=1, cstride=1)
+
+
 def _extract_positions(env, obs):
     evader_pos = np.asarray(obs["evader"][0:3], dtype=float)
     pursuer_pos = np.asarray(obs["pursuer"][0:3], dtype=float)
@@ -157,6 +168,7 @@ def run_batch_simulation(num_episodes, cfg, show_anim=False):
             ax.scatter([b[0]], [b[1]], [b[2]], c="blue", s=40, label="Evader")
             ax.scatter([r[0]], [r[1]], [r[2]], c="red", s=40, label="Pursuer")
             ax.plot([b[0], r[0]], [b[1], r[1]], [b[2], r[2]], color="gray", alpha=0.25)
+            _draw_capture_wireframe(ax, r, cfg.CAPTURE_RADIUS)
             ax.legend(loc="upper right")
             plt.pause(0.001)
 
