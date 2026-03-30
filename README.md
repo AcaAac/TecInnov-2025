@@ -9,7 +9,7 @@ Implementation of Imitation Learning (BC) and Reinforcement Learning (RL) pipeli
 - [configs/train.yaml](file:///configs/train.yaml): Default training configuration.
 - [configs/simulate.yaml](file:///configs/simulate.yaml): Default simulation configuration.
 - [notebooks/evaluation_metrics.ipynb](file:///notebooks/evaluation_metrics.ipynb): Advanced evaluation notebook (regime maps, trajectory grids, distributions).
-- [ppo.py](file:///ppo.py): PyTorch implementation of PPO (Proximal Policy Optimization) and Neural Network definitions ([ActorCritic](file:///ppo.py#10-69)).
+- [models/ppo.py](/Users/rvf/Developer/TecInnov-2025/src/models/ppo.py): PyTorch implementation of PPO (Proximal Policy Optimization) and Neural Network definitions ([ActorCritic](/Users/rvf/Developer/TecInnov-2025/src/models/ppo.py#L10-L69)).
 
 ## Implementation Details
 1.  **Expert Demo Collection**: Runs the heuristic `EvaderPolicy` from `src/env/policies.py` to generate a dataset.

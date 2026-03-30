@@ -18,7 +18,7 @@ try:
     import torch.optim as optim
     from torch.utils.data import DataLoader, TensorDataset
 
-    from ppo import PPOAgent
+    from models import PPOAgent
 
     if torch.backends.mps.is_available():
         DEVICE = torch.device("mps")

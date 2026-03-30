@@ -20,7 +20,7 @@ except ImportError:
     torch = None
     DEVICE = None
 
-from ppo import PPOAgent
+from models import PPOAgent
 
 
 def _extract_positions(env, obs):
