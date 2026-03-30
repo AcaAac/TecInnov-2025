@@ -14,10 +14,10 @@ class Env3DConfig:
     CAPTURE_RADIUS: float
     MIN_INIT_DIST: float
     WALLS_MODE: bool
-    V_RED_MAX: float
-    V_BLUE_MAX: float
-    ACCEL_RED_MAX: float
-    ACCEL_BLUE_MAX: float
+    V_PURSUER_MAX: float
+    V_EVADER_MAX: float
+    ACCEL_PURSUER_MAX: float
+    ACCEL_EVADER_MAX: float
     TRACKING_GAIN: float
     JUKE_DISTANCE_THRESHOLD: float
     WALL_AVOIDANCE_GAIN: float
@@ -38,10 +38,10 @@ _SCHEMA: Dict[str, type] = {
     "CAPTURE_RADIUS": float,
     "MIN_INIT_DIST": float,
     "WALLS_MODE": bool,
-    "V_RED_MAX": float,
-    "V_BLUE_MAX": float,
-    "ACCEL_RED_MAX": float,
-    "ACCEL_BLUE_MAX": float,
+    "V_PURSUER_MAX": float,
+    "V_EVADER_MAX": float,
+    "ACCEL_PURSUER_MAX": float,
+    "ACCEL_EVADER_MAX": float,
     "TRACKING_GAIN": float,
     "JUKE_DISTANCE_THRESHOLD": float,
     "WALL_AVOIDANCE_GAIN": float,

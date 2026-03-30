@@ -39,16 +39,16 @@ class AgentPolicy:
         raise NotImplementedError
 
 
-class RedPursuitPolicy(AgentPolicy):
+class PursuerPolicy(AgentPolicy):
     def __init__(self, config: EnvConfig):
         self.config = config
 
-    def get_action(self, obs, agent_type: str = "red"):
+    def get_action(self, obs, agent_type: str = "pursuer"):
         mode = obs["mode"]
 
         if mode == "DISCRETE":
-            my_pos = obs["red"]
-            target_pos = obs["blue"]
+            my_pos = obs["pursuer"]
+            target_pos = obs["evader"]
 
             diff = _get_toroidal_displacement(target_pos, my_pos, self.config, mode="DISCRETE")
             dx = int(np.sign(diff[0]))
@@ -67,27 +67,27 @@ class RedPursuitPolicy(AgentPolicy):
             }
             return mapping.get((dx, dy), 0)
 
-        # Option B guidance: output desired planar velocity toward Blue.
-        my_state = obs["red"]
-        target_state = obs["blue"]
-        p_red = np.asarray(my_state[0:2], dtype=np.float64)
-        p_blue = np.asarray(target_state[0:2], dtype=np.float64)
+        # Option B guidance: output desired planar velocity toward the evader.
+        my_state = obs["pursuer"]
+        target_state = obs["evader"]
+        pursuer_pos = np.asarray(my_state[0:2], dtype=np.float64)
+        evader_pos = np.asarray(target_state[0:2], dtype=np.float64)
 
-        to_blue = _get_toroidal_displacement(p_blue, p_red, self.config, mode="CONTINUOUS")
-        return self.config.V_RED_MAX * normalize(to_blue)
+        to_evader = _get_toroidal_displacement(evader_pos, pursuer_pos, self.config, mode="CONTINUOUS")
+        return self.config.V_PURSUER_MAX * normalize(to_evader)
 
 
-class BlueEvasivePolicy(AgentPolicy):
+class EvaderPolicy(AgentPolicy):
     def __init__(self, config: EnvConfig, seed: Optional[int] = None):
         self.config = config
         self.rng = np.random.RandomState(config.SEED if seed is None else seed)
 
-    def get_action(self, obs, agent_type: str = "blue"):
+    def get_action(self, obs, agent_type: str = "evader"):
         mode = obs["mode"]
 
         if mode == "DISCRETE":
-            my_pos = obs["blue"]
-            opp_pos = obs["red"]
+            my_pos = obs["evader"]
+            opp_pos = obs["pursuer"]
 
             diff = _get_toroidal_displacement(my_pos, opp_pos, self.config, mode="DISCRETE")
             if abs(diff[0]) < 1 and abs(diff[1]) < 1:
@@ -122,13 +122,13 @@ class BlueEvasivePolicy(AgentPolicy):
             return mapping.get((dx, dy), 0)
 
         # Option B guidance: output desired planar velocity for evasion.
-        my_state = obs["blue"]
-        opp_state = obs["red"]
+        my_state = obs["evader"]
+        opp_state = obs["pursuer"]
 
-        p_blue = np.asarray(my_state[0:2], dtype=np.float64)
-        p_red = np.asarray(opp_state[0:2], dtype=np.float64)
+        evader_pos = np.asarray(my_state[0:2], dtype=np.float64)
+        pursuer_pos = np.asarray(opp_state[0:2], dtype=np.float64)
 
-        rel = _get_toroidal_displacement(p_blue, p_red, self.config, mode="CONTINUOUS")
+        rel = _get_toroidal_displacement(evader_pos, pursuer_pos, self.config, mode="CONTINUOUS")
         dist = np.linalg.norm(rel)
         escape_dir = normalize(rel)
 
@@ -140,14 +140,14 @@ class BlueEvasivePolicy(AgentPolicy):
             arena = float(self.config.ARENA_SIZE)
             margin = 0.2 * arena
             gain = float(self.config.WALL_AVOIDANCE_GAIN)
-            if p_blue[0] < margin:
-                wall_term[0] += gain * (margin - p_blue[0]) / max(margin, 1e-9)
-            if p_blue[0] > arena - margin:
-                wall_term[0] -= gain * (p_blue[0] - (arena - margin)) / max(margin, 1e-9)
-            if p_blue[1] < margin:
-                wall_term[1] += gain * (margin - p_blue[1]) / max(margin, 1e-9)
-            if p_blue[1] > arena - margin:
-                wall_term[1] -= gain * (p_blue[1] - (arena - margin)) / max(margin, 1e-9)
+            if evader_pos[0] < margin:
+                wall_term[0] += gain * (margin - evader_pos[0]) / max(margin, 1e-9)
+            if evader_pos[0] > arena - margin:
+                wall_term[0] -= gain * (evader_pos[0] - (arena - margin)) / max(margin, 1e-9)
+            if evader_pos[1] < margin:
+                wall_term[1] += gain * (margin - evader_pos[1]) / max(margin, 1e-9)
+            if evader_pos[1] > arena - margin:
+                wall_term[1] -= gain * (evader_pos[1] - (arena - margin)) / max(margin, 1e-9)
 
         juke_term = np.zeros(2, dtype=np.float64)
         if dist < self.config.JUKE_DISTANCE_THRESHOLD and np.linalg.norm(escape_dir) > 1e-9:
@@ -161,4 +161,4 @@ class BlueEvasivePolicy(AgentPolicy):
         direction = normalize(vec)
         if np.linalg.norm(direction) < 1e-9:
             direction = escape_dir
-        return self.config.V_BLUE_MAX * direction
+        return self.config.V_EVADER_MAX * direction

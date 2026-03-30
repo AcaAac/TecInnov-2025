@@ -8,39 +8,39 @@ import pandas as pd
 
 from analysis import build_episode_summary_3d, plot_trajectory_projections_3d, plot_time_to_capture_by_policy_3d, plot_success_vs_initial_distance_3d
 from analysis.eval_metrics_3d import plot_trajectory_scatter_3d
-from env import BlueEvasivePolicy3D, DroneEnv3D, RedPursuitPolicy3D, load_env_config_3d
+from env import EvaderPolicy3D, DroneEnv3D, PursuerPolicy3D, load_env_config_3d
 
 
 def _extract_positions(env, obs):
-    b_pos = np.asarray(obs["blue"][0:3], dtype=float)
-    r_pos = np.asarray(obs["red"][0:3], dtype=float)
-    b_vel = np.asarray(obs["blue"][3:6], dtype=float)
-    r_vel = np.asarray(obs["red"][3:6], dtype=float)
-    return b_pos, r_pos, b_vel, r_vel
+    evader_pos = np.asarray(obs["evader"][0:3], dtype=float)
+    pursuer_pos = np.asarray(obs["pursuer"][0:3], dtype=float)
+    evader_vel = np.asarray(obs["evader"][3:6], dtype=float)
+    pursuer_vel = np.asarray(obs["pursuer"][3:6], dtype=float)
+    return evader_pos, pursuer_pos, evader_vel, pursuer_vel
 
 
 def run_episode(
     env,
-    blue_policy,
-    red_policy,
+    evader_policy,
+    pursuer_policy,
     episode_id,
-    policy_name="HeuristicBlue3D",
+    policy_name="HeuristicEvader3D",
     render_callback=None,
 ):
     obs = env.reset()
     done = False
     trajectory = []
 
-    init_b_pos, init_r_pos, _, _ = _extract_positions(env, obs)
+    init_evader_pos, init_pursuer_pos, _, _ = _extract_positions(env, obs)
     init_distance = env.get_distance()
 
     while not done:
-        act_blue = blue_policy.get_action(obs, "blue")
-        act_red = red_policy.get_action(obs, "red")
+        act_evader = evader_policy.get_action(obs, "evader")
+        act_pursuer = pursuer_policy.get_action(obs, "pursuer")
 
-        obs, _, done, info = env.step(act_blue, act_red)
+        obs, _, done, info = env.step(act_evader, act_pursuer)
 
-        b_pos, r_pos, b_vel, r_vel = _extract_positions(env, obs)
+        evader_pos, pursuer_pos, evader_vel, pursuer_vel = _extract_positions(env, obs)
         distance = float(info.get("distance", env.get_distance()))
         captured = int(bool(info.get("caught", False)))
         outcome = str(info.get("outcome", "running"))
@@ -53,33 +53,33 @@ def run_episode(
                 "step": int(env.step_count),
                 "time": float(env.t),
                 "mode": env.mode,
-                "blue_x": float(b_pos[0]),
-                "blue_y": float(b_pos[1]),
-                "blue_z": float(b_pos[2]),
-                "red_x": float(r_pos[0]),
-                "red_y": float(r_pos[1]),
-                "red_z": float(r_pos[2]),
-                "blue_vx": float(b_vel[0]),
-                "blue_vy": float(b_vel[1]),
-                "blue_vz": float(b_vel[2]),
-                "red_vx": float(r_vel[0]),
-                "red_vy": float(r_vel[1]),
-                "red_vz": float(r_vel[2]),
+                "evader_x": float(evader_pos[0]),
+                "evader_y": float(evader_pos[1]),
+                "evader_z": float(evader_pos[2]),
+                "pursuer_x": float(pursuer_pos[0]),
+                "pursuer_y": float(pursuer_pos[1]),
+                "pursuer_z": float(pursuer_pos[2]),
+                "evader_vx": float(evader_vel[0]),
+                "evader_vy": float(evader_vel[1]),
+                "evader_vz": float(evader_vel[2]),
+                "pursuer_vx": float(pursuer_vel[0]),
+                "pursuer_vy": float(pursuer_vel[1]),
+                "pursuer_vz": float(pursuer_vel[2]),
                 "distance": distance,
                 "captured": captured,
                 "outcome": outcome,
-                "init_blue_x": float(init_b_pos[0]),
-                "init_blue_y": float(init_b_pos[1]),
-                "init_blue_z": float(init_b_pos[2]),
-                "init_red_x": float(init_r_pos[0]),
-                "init_red_y": float(init_r_pos[1]),
-                "init_red_z": float(init_r_pos[2]),
+                "init_evader_x": float(init_evader_pos[0]),
+                "init_evader_y": float(init_evader_pos[1]),
+                "init_evader_z": float(init_evader_pos[2]),
+                "init_pursuer_x": float(init_pursuer_pos[0]),
+                "init_pursuer_y": float(init_pursuer_pos[1]),
+                "init_pursuer_z": float(init_pursuer_pos[2]),
                 "init_distance": float(init_distance),
             }
         )
 
         if render_callback:
-            render_callback(b_pos, r_pos)
+            render_callback(evader_pos, pursuer_pos)
 
     return trajectory
 
@@ -134,8 +134,8 @@ def run_batch_simulation(num_episodes, cfg, show_anim=False):
     print(f"Starting {num_episodes} episodes in 3D mode...")
 
     env = DroneEnv3D(config=cfg)
-    blue_pol = BlueEvasivePolicy3D(cfg, seed=cfg.SEED)
-    red_pol = RedPursuitPolicy3D(cfg)
+    evader_pol = EvaderPolicy3D(cfg, seed=cfg.SEED)
+    pursuer_pol = PursuerPolicy3D(cfg)
 
     all_steps = []
 
@@ -154,8 +154,8 @@ def run_batch_simulation(num_episodes, cfg, show_anim=False):
             ax.set_xlim(0, cfg.ARENA_SIZE)
             ax.set_ylim(0, cfg.ARENA_SIZE)
             ax.set_zlim(0, cfg.ARENA_HEIGHT)
-            ax.scatter([b[0]], [b[1]], [b[2]], c="blue", s=40, label="Blue (Evader)")
-            ax.scatter([r[0]], [r[1]], [r[2]], c="red", s=40, label="Red (Pursuer)")
+            ax.scatter([b[0]], [b[1]], [b[2]], c="blue", s=40, label="Evader")
+            ax.scatter([r[0]], [r[1]], [r[2]], c="red", s=40, label="Pursuer")
             ax.plot([b[0], r[0]], [b[1], r[1]], [b[2], r[2]], color="gray", alpha=0.25)
             ax.legend(loc="upper right")
             plt.pause(0.001)
@@ -167,7 +167,7 @@ def run_batch_simulation(num_episodes, cfg, show_anim=False):
 
     for i in range(num_episodes):
         env.seed(cfg.SEED + i)
-        steps = run_episode(env, blue_pol, red_pol, i, render_callback=update_render)
+        steps = run_episode(env, evader_pol, pursuer_pol, i, render_callback=update_render)
         all_steps.extend(steps)
 
         if (i + 1) % 50 == 0:

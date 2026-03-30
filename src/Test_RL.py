@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from analysis import build_episode_summary
-from env import DroneEnv, RedPursuitPolicy, load_env_config
+from env import DroneEnv, PursuerPolicy, load_env_config
 
 try:
     import torch
@@ -25,16 +25,16 @@ from ppo import PPOAgent
 
 def _extract_positions(env, obs):
     if env.mode == "DISCRETE":
-        b_pos = env._idx_to_pos(obs["blue"])
-        r_pos = env._idx_to_pos(obs["red"])
-        b_vel = np.zeros(2, dtype=float)
-        r_vel = np.zeros(2, dtype=float)
+        evader_pos = env._idx_to_pos(obs["evader"])
+        pursuer_pos = env._idx_to_pos(obs["pursuer"])
+        evader_vel = np.zeros(2, dtype=float)
+        pursuer_vel = np.zeros(2, dtype=float)
     else:
-        b_pos = np.asarray(obs["blue"][0:2], dtype=float)
-        r_pos = np.asarray(obs["red"][0:2], dtype=float)
-        b_vel = np.asarray(obs["blue"][2:4], dtype=float)
-        r_vel = np.asarray(obs["red"][2:4], dtype=float)
-    return b_pos, r_pos, b_vel, r_vel
+        evader_pos = np.asarray(obs["evader"][0:2], dtype=float)
+        pursuer_pos = np.asarray(obs["pursuer"][0:2], dtype=float)
+        evader_vel = np.asarray(obs["evader"][2:4], dtype=float)
+        pursuer_vel = np.asarray(obs["pursuer"][2:4], dtype=float)
+    return evader_pos, pursuer_pos, evader_vel, pursuer_vel
 
 
 def _resolve_model_path(output_dir: str, mode: str, model_path: Optional[str]) -> str:
@@ -46,7 +46,7 @@ def _resolve_model_path(output_dir: str, mode: str, model_path: Optional[str]) -
     if not os.path.exists(path):
         raise FileNotFoundError(
             f"RL model not found at '{path}'. Run training first, e.g.: "
-            f"python src/train_blue.py --mode {mode} --config configs/train.yaml --train_rl"
+            f"python src/train.py --mode {mode} --config configs/train.yaml --train_rl"
         )
     return path
 
@@ -54,7 +54,7 @@ def _resolve_model_path(output_dir: str, mode: str, model_path: Optional[str]) -
 def _run_rl_episode(
     env,
     rl_agent,
-    red_policy,
+    pursuer_policy,
     mode: str,
     deterministic: bool,
     episode_id: int,
@@ -66,7 +66,7 @@ def _run_rl_episode(
     done = False
     trajectory = []
 
-    init_b_pos, init_r_pos, _, _ = _extract_positions(env, obs)
+    init_evader_pos, init_pursuer_pos, _, _ = _extract_positions(env, obs)
     init_distance = env.get_distance()
 
     while not done:
@@ -77,14 +77,14 @@ def _run_rl_episode(
             action, _, _ = rl_agent.model.get_action(s_tensor, deterministic=deterministic)
 
         if mode == "DISCRETE":
-            act_blue = action.item()
+            act_evader = action.item()
         else:
-            act_blue = action.detach().cpu().numpy() * env.config.V_BLUE_MAX
+            act_evader = action.detach().cpu().numpy() * env.config.V_EVADER_MAX
 
-        act_red = red_policy.get_action(obs, "red")
-        obs, _, done, info = env.step(act_blue, act_red)
+        act_pursuer = pursuer_policy.get_action(obs, "pursuer")
+        obs, _, done, info = env.step(act_evader, act_pursuer)
 
-        b_pos, r_pos, b_vel, r_vel = _extract_positions(env, obs)
+        evader_pos, pursuer_pos, evader_vel, pursuer_vel = _extract_positions(env, obs)
         distance = float(info.get("distance", env.get_distance()))
         captured = int(bool(info.get("caught", False)))
         outcome = str(info.get("outcome", "running"))
@@ -97,21 +97,21 @@ def _run_rl_episode(
                 "step": int(env.step_count),
                 "time": float(env.t),
                 "mode": mode,
-                "blue_x": float(b_pos[0]),
-                "blue_y": float(b_pos[1]),
-                "red_x": float(r_pos[0]),
-                "red_y": float(r_pos[1]),
-                "blue_vx": float(b_vel[0]),
-                "blue_vy": float(b_vel[1]),
-                "red_vx": float(r_vel[0]),
-                "red_vy": float(r_vel[1]),
+                "evader_x": float(evader_pos[0]),
+                "evader_y": float(evader_pos[1]),
+                "pursuer_x": float(pursuer_pos[0]),
+                "pursuer_y": float(pursuer_pos[1]),
+                "evader_vx": float(evader_vel[0]),
+                "evader_vy": float(evader_vel[1]),
+                "pursuer_vx": float(pursuer_vel[0]),
+                "pursuer_vy": float(pursuer_vel[1]),
                 "distance": distance,
                 "captured": captured,
                 "outcome": outcome,
-                "init_blue_x": float(init_b_pos[0]),
-                "init_blue_y": float(init_b_pos[1]),
-                "init_red_x": float(init_r_pos[0]),
-                "init_red_y": float(init_r_pos[1]),
+                "init_evader_x": float(init_evader_pos[0]),
+                "init_evader_y": float(init_evader_pos[1]),
+                "init_pursuer_x": float(init_pursuer_pos[0]),
+                "init_pursuer_y": float(init_pursuer_pos[1]),
                 "init_distance": float(init_distance),
             }
         )
@@ -127,7 +127,7 @@ def main():
     if torch is None:
         raise RuntimeError("PyTorch is required to run RL model visualization.")
 
-    parser = argparse.ArgumentParser(description="Visualize trained RL Blue policy against Red pursuer")
+    parser = argparse.ArgumentParser(description="Visualize trained RL evader policy against the pursuer")
     parser.add_argument("--mode", type=str, default="CONTINUOUS", choices=["CONTINUOUS", "DISCRETE"])
     parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--config", type=str, default=None, help="Path to config YAML (default: train profile)")
@@ -152,7 +152,7 @@ def main():
     model_path = _resolve_model_path(cfg.OUTPUT_DIR, args.mode, args.model_path)
 
     env = DroneEnv(mode=args.mode, config=cfg)
-    red_policy = RedPursuitPolicy(cfg)
+    pursuer_policy = PursuerPolicy(cfg)
 
     state_dim = env.get_state_dim()
     action_dim = env.get_action_dim()
@@ -180,7 +180,7 @@ def main():
         episode_steps = _run_rl_episode(
             env=env,
             rl_agent=rl_agent,
-            red_policy=red_policy,
+            pursuer_policy=pursuer_policy,
             mode=args.mode,
             deterministic=not args.stochastic,
             episode_id=ep,

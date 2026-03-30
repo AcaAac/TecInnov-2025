@@ -25,8 +25,8 @@ class EnvConfig:
     KV: float
     KTHETA: float
     KQ: float
-    V_RED_MAX: float
-    V_BLUE_MAX: float
+    V_PURSUER_MAX: float
+    V_EVADER_MAX: float
     JUKE_DISTANCE_THRESHOLD: float
     WALL_AVOIDANCE_GAIN: float
     NUM_EPISODES: int
@@ -57,8 +57,8 @@ _SCHEMA: Dict[str, type] = {
     "KV": float,
     "KTHETA": float,
     "KQ": float,
-    "V_RED_MAX": float,
-    "V_BLUE_MAX": float,
+    "V_PURSUER_MAX": float,
+    "V_EVADER_MAX": float,
     "JUKE_DISTANCE_THRESHOLD": float,
     "WALL_AVOIDANCE_GAIN": float,
     "NUM_EPISODES": int,

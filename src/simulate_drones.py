@@ -11,46 +11,46 @@ from analysis import (
     plot_success_vs_initial_distance,
     plot_time_to_capture_by_policy,
 )
-from env import BlueEvasivePolicy, DroneEnv, RedPursuitPolicy, load_env_config
+from env import EvaderPolicy, DroneEnv, PursuerPolicy, load_env_config
 
 
 def _extract_positions(env, obs):
     if env.mode == "DISCRETE":
-        b_pos = env._idx_to_pos(obs["blue"])
-        r_pos = env._idx_to_pos(obs["red"])
-        b_vel = np.zeros(2, dtype=float)
-        r_vel = np.zeros(2, dtype=float)
+        evader_pos = env._idx_to_pos(obs["evader"])
+        pursuer_pos = env._idx_to_pos(obs["pursuer"])
+        evader_vel = np.zeros(2, dtype=float)
+        pursuer_vel = np.zeros(2, dtype=float)
     else:
-        b_pos = np.asarray(obs["blue"][0:2], dtype=float)
-        r_pos = np.asarray(obs["red"][0:2], dtype=float)
-        b_vel = np.asarray(obs["blue"][2:4], dtype=float)
-        r_vel = np.asarray(obs["red"][2:4], dtype=float)
-    return b_pos, r_pos, b_vel, r_vel
+        evader_pos = np.asarray(obs["evader"][0:2], dtype=float)
+        pursuer_pos = np.asarray(obs["pursuer"][0:2], dtype=float)
+        evader_vel = np.asarray(obs["evader"][2:4], dtype=float)
+        pursuer_vel = np.asarray(obs["pursuer"][2:4], dtype=float)
+    return evader_pos, pursuer_pos, evader_vel, pursuer_vel
 
 
 def run_episode(
     env,
-    blue_policy,
-    red_policy,
+    evader_policy,
+    pursuer_policy,
     episode_id,
-    policy_name="HeuristicBlue",
+    policy_name="HeuristicEvader",
     render_callback=None,
 ):
     obs = env.reset()
     done = False
     trajectory = []
 
-    init_b_pos, init_r_pos, _, _ = _extract_positions(env, obs)
+    init_evader_pos, init_pursuer_pos, _, _ = _extract_positions(env, obs)
     init_distance = env.get_distance()
 
     while not done:
-        act_blue = blue_policy.get_action(obs, "blue")
-        act_red = red_policy.get_action(obs, "red")
+        act_evader = evader_policy.get_action(obs, "evader")
+        act_pursuer = pursuer_policy.get_action(obs, "pursuer")
 
-        obs, _, done, info = env.step(act_blue, act_red)
+        obs, _, done, info = env.step(act_evader, act_pursuer)
 
         # Log post-step state so position, step/time, and info metrics are aligned.
-        b_pos, r_pos, b_vel, r_vel = _extract_positions(env, obs)
+        evader_pos, pursuer_pos, evader_vel, pursuer_vel = _extract_positions(env, obs)
         distance = float(info.get("distance", env.get_distance()))
         captured = int(bool(info.get("caught", False)))
         outcome = str(info.get("outcome", "running"))
@@ -63,27 +63,27 @@ def run_episode(
                 "step": int(env.step_count),
                 "time": float(env.t),
                 "mode": env.mode,
-                "blue_x": float(b_pos[0]),
-                "blue_y": float(b_pos[1]),
-                "red_x": float(r_pos[0]),
-                "red_y": float(r_pos[1]),
-                "blue_vx": float(b_vel[0]),
-                "blue_vy": float(b_vel[1]),
-                "red_vx": float(r_vel[0]),
-                "red_vy": float(r_vel[1]),
+                "evader_x": float(evader_pos[0]),
+                "evader_y": float(evader_pos[1]),
+                "pursuer_x": float(pursuer_pos[0]),
+                "pursuer_y": float(pursuer_pos[1]),
+                "evader_vx": float(evader_vel[0]),
+                "evader_vy": float(evader_vel[1]),
+                "pursuer_vx": float(pursuer_vel[0]),
+                "pursuer_vy": float(pursuer_vel[1]),
                 "distance": distance,
                 "captured": captured,
                 "outcome": outcome,
-                "init_blue_x": float(init_b_pos[0]),
-                "init_blue_y": float(init_b_pos[1]),
-                "init_red_x": float(init_r_pos[0]),
-                "init_red_y": float(init_r_pos[1]),
+                "init_evader_x": float(init_evader_pos[0]),
+                "init_evader_y": float(init_evader_pos[1]),
+                "init_pursuer_x": float(init_pursuer_pos[0]),
+                "init_pursuer_y": float(init_pursuer_pos[1]),
                 "init_distance": float(init_distance),
             }
         )
 
         if render_callback:
-            render_callback(b_pos, r_pos)
+            render_callback(evader_pos, pursuer_pos)
 
     return trajectory
 
@@ -129,8 +129,8 @@ def run_batch_simulation(num_episodes, mode, cfg, show_anim=False):
     print(f"Starting {num_episodes} episodes in {mode} mode...")
 
     env = DroneEnv(mode=mode, config=cfg)
-    blue_pol = BlueEvasivePolicy(cfg, seed=cfg.SEED)
-    red_pol = RedPursuitPolicy(cfg)
+    evader_pol = EvaderPolicy(cfg, seed=cfg.SEED)
+    pursuer_pol = PursuerPolicy(cfg)
 
     all_steps = []
 
@@ -139,8 +139,8 @@ def run_batch_simulation(num_episodes, mode, cfg, show_anim=False):
         ax.set_xlim(0, cfg.ARENA_SIZE)
         ax.set_ylim(0, cfg.ARENA_SIZE)
         ax.set_title(f"Drone Pursuit ({mode})")
-        blue_dot, = ax.plot([], [], "bo", markersize=10, label="Blue (Evader)")
-        red_dot, = ax.plot([], [], "ro", markersize=10, label="Red (Pursuer)")
+        evader_dot, = ax.plot([], [], "bo", markersize=10, label="Evader")
+        pursuer_dot, = ax.plot([], [], "ro", markersize=10, label="Pursuer")
 
         capture_circle = plt.Circle(
             (0, 0),
@@ -160,8 +160,8 @@ def run_batch_simulation(num_episodes, mode, cfg, show_anim=False):
         plt.show()
 
         def update_render(b, r):
-            blue_dot.set_data([b[0]], [b[1]])
-            red_dot.set_data([r[0]], [r[1]])
+            evader_dot.set_data([b[0]], [b[1]])
+            pursuer_dot.set_data([r[0]], [r[1]])
             capture_circle.center = (r[0], r[1])
             plt.pause(0.001)
 
@@ -172,7 +172,7 @@ def run_batch_simulation(num_episodes, mode, cfg, show_anim=False):
 
     for i in range(num_episodes):
         env.seed(cfg.SEED + i)
-        steps = run_episode(env, blue_pol, red_pol, i, render_callback=update_render)
+        steps = run_episode(env, evader_pol, pursuer_pol, i, render_callback=update_render)
         all_steps.extend(steps)
 
         if (i + 1) % 50 == 0:

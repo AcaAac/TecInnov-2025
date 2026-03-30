@@ -25,10 +25,10 @@ def build_episode_summary(
         "distance",
         "captured",
         "outcome",
-        "init_blue_x",
-        "init_blue_y",
-        "init_red_x",
-        "init_red_y",
+        "init_evader_x",
+        "init_evader_y",
+        "init_pursuer_x",
+        "init_pursuer_y",
         "init_distance",
         "mode",
     }
@@ -55,10 +55,10 @@ def build_episode_summary(
                 "policy_name": first.get("policy_name", "unknown"),
                 "mode": first.get("mode", "unknown"),
                 "episode_id": int(first.get("episode_id", 0)),
-                "init_blue_x": _safe_float(first["init_blue_x"]),
-                "init_blue_y": _safe_float(first["init_blue_y"]),
-                "init_red_x": _safe_float(first["init_red_x"]),
-                "init_red_y": _safe_float(first["init_red_y"]),
+                "init_evader_x": _safe_float(first["init_evader_x"]),
+                "init_evader_y": _safe_float(first["init_evader_y"]),
+                "init_pursuer_x": _safe_float(first["init_pursuer_x"]),
+                "init_pursuer_y": _safe_float(first["init_pursuer_y"]),
                 "init_distance": _safe_float(first["init_distance"]),
                 "outcome": str(last.get("outcome", "unknown")),
                 "captured": captured,
@@ -180,10 +180,10 @@ def plot_time_to_capture_by_policy(
 
 def run_initial_condition_grid(
     env,
-    blue_policy,
-    red_policy,
+    evader_policy,
+    pursuer_policy,
     grid_n: int = 15,
-    fixed_red_pos: Optional[Tuple[float, float]] = None,
+    fixed_pursuer_pos: Optional[Tuple[float, float]] = None,
     max_steps: Optional[int] = None,
     include_trajectories: bool = True,
 ):
@@ -192,10 +192,10 @@ def run_initial_condition_grid(
 
     cfg = env.config
     max_steps = cfg.MAX_STEPS if max_steps is None else int(max_steps)
-    fixed_red = (
+    fixed_pursuer = (
         np.array([cfg.ARENA_SIZE * 0.5, cfg.ARENA_SIZE * 0.5], dtype=float)
-        if fixed_red_pos is None
-        else np.asarray(fixed_red_pos, dtype=float)
+        if fixed_pursuer_pos is None
+        else np.asarray(fixed_pursuer_pos, dtype=float)
     )
 
     xs = np.linspace(0.05 * cfg.ARENA_SIZE, 0.95 * cfg.ARENA_SIZE, grid_n)
@@ -207,28 +207,28 @@ def run_initial_condition_grid(
     for ix, x in enumerate(xs):
         for iy, y in enumerate(ys):
             obs = env.reset(
-                initial_blue_pos=np.array([x, y], dtype=float),
-                initial_red_pos=fixed_red,
-                initial_blue_vel=np.zeros(2, dtype=float),
-                initial_red_vel=np.zeros(2, dtype=float),
+                initial_evader_pos=np.array([x, y], dtype=float),
+                initial_pursuer_pos=fixed_pursuer,
+                initial_evader_vel=np.zeros(2, dtype=float),
+                initial_pursuer_vel=np.zeros(2, dtype=float),
                 skip_min_dist_check=True,
             )
 
             step_rows = []
             done = False
             while not done and env.step_count < max_steps:
-                act_blue = blue_policy.get_action(obs, "blue")
-                act_red = red_policy.get_action(obs, "red")
-                obs, _, done, info = env.step(act_blue, act_red)
+                act_evader = evader_policy.get_action(obs, "evader")
+                act_pursuer = pursuer_policy.get_action(obs, "pursuer")
+                obs, _, done, info = env.step(act_evader, act_pursuer)
 
                 step_rows.append(
                     {
                         "step": env.step_count,
                         "time": env.t,
-                        "blue_x": float(obs["blue"][0]),
-                        "blue_y": float(obs["blue"][1]),
-                        "red_x": float(obs["red"][0]),
-                        "red_y": float(obs["red"][1]),
+                        "evader_x": float(obs["evader"][0]),
+                        "evader_y": float(obs["evader"][1]),
+                        "pursuer_x": float(obs["pursuer"][0]),
+                        "pursuer_y": float(obs["pursuer"][1]),
                         "distance": float(info.get("distance", env.get_distance())),
                         "captured": int(info.get("caught", False)),
                         "outcome": info.get("outcome", "running"),
@@ -242,15 +242,15 @@ def run_initial_condition_grid(
             if captured and not step_df.empty:
                 time_to_capture = float(step_df.loc[step_df["captured"] == 1, "time"].iloc[0])
 
-            init_dist = float(np.linalg.norm(np.array([x, y], dtype=float) - fixed_red))
+            init_dist = float(np.linalg.norm(np.array([x, y], dtype=float) - fixed_pursuer))
             regime_rows.append(
                 {
                     "grid_ix": ix,
                     "grid_iy": iy,
-                    "init_blue_x": float(x),
-                    "init_blue_y": float(y),
-                    "init_red_x": float(fixed_red[0]),
-                    "init_red_y": float(fixed_red[1]),
+                    "init_evader_x": float(x),
+                    "init_evader_y": float(y),
+                    "init_pursuer_x": float(fixed_pursuer[0]),
+                    "init_pursuer_y": float(fixed_pursuer[1]),
                     "init_distance": init_dist,
                     "captured": captured,
                     "evaded": 1 - captured,
@@ -287,7 +287,7 @@ def plot_regime_map(regime_df: pd.DataFrame, arena_size: float, ax=None, title: 
         ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
         return ax
 
-    pivot = regime_df.pivot(index="init_blue_y", columns="init_blue_x", values="captured")
+    pivot = regime_df.pivot(index="init_evader_y", columns="init_evader_x", values="captured")
     x = pivot.columns.to_numpy(dtype=float)
     y = pivot.index.to_numpy(dtype=float)
     z = pivot.to_numpy(dtype=float)
@@ -301,11 +301,11 @@ def plot_regime_map(regime_df: pd.DataFrame, arena_size: float, ax=None, title: 
         vmax=1,
         aspect="equal",
     )
-    ax.scatter(regime_df["init_red_x"].iloc[0], regime_df["init_red_y"].iloc[0], c="black", s=40, marker="x", label="Fixed Red")
+    ax.scatter(regime_df["init_pursuer_x"].iloc[0], regime_df["init_pursuer_y"].iloc[0], c="black", s=40, marker="x", label="Fixed Pursuer")
     ax.set_xlim(0, arena_size)
     ax.set_ylim(0, arena_size)
-    ax.set_xlabel("Blue init x")
-    ax.set_ylabel("Blue init y")
+    ax.set_xlabel("Evader init x")
+    ax.set_ylabel("Evader init y")
     ax.set_title(title)
     ax.legend(loc="upper right", fontsize=8)
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Capture (1=yes)")
@@ -333,10 +333,10 @@ def plot_trajectory_grid(
     for key, traj in trajectory_map.items():
         if traj.empty:
             continue
-        ax.plot(traj["blue_x"], traj["blue_y"], color="tab:blue", alpha=0.45, linewidth=1.0)
-        ax.plot(traj["red_x"], traj["red_y"], color="tab:red", alpha=0.45, linewidth=1.0)
-        ax.scatter(traj["blue_x"].iloc[0], traj["blue_y"].iloc[0], c="tab:blue", s=12)
-        ax.scatter(traj["red_x"].iloc[0], traj["red_y"].iloc[0], c="tab:red", s=12)
+        ax.plot(traj["evader_x"], traj["evader_y"], color="tab:blue", alpha=0.45, linewidth=1.0)
+        ax.plot(traj["pursuer_x"], traj["pursuer_y"], color="tab:red", alpha=0.45, linewidth=1.0)
+        ax.scatter(traj["evader_x"].iloc[0], traj["evader_y"].iloc[0], c="tab:blue", s=12)
+        ax.scatter(traj["pursuer_x"].iloc[0], traj["pursuer_y"].iloc[0], c="tab:red", s=12)
 
     ax.set_title(title)
     ax.set_xlabel("x")
@@ -350,7 +350,7 @@ def plot_phase_portrait_samples(
     policy_name: Optional[str] = None,
     max_episodes: int = 9,
     ax=None,
-    title: str = "Blue Phase Portrait (x vs vx)",
+    title: str = "Evader Phase Portrait (x vs vx)",
 ):
     if ax is None:
         _, ax = plt.subplots(figsize=(6.5, 5.5))
@@ -373,11 +373,11 @@ def plot_phase_portrait_samples(
         if i >= max_episodes:
             break
         ordered = group.sort_values("step")
-        ax.plot(ordered["blue_x"], ordered["blue_vx"], alpha=0.65, linewidth=1.0)
+        ax.plot(ordered["evader_x"], ordered["evader_vx"], alpha=0.65, linewidth=1.0)
 
     ax.set_title(title if policy_name is None else f"{title} - {policy_name}")
-    ax.set_xlabel("Blue x")
-    ax.set_ylabel("Blue vx")
+    ax.set_xlabel("Evader x")
+    ax.set_ylabel("Evader vx")
     ax.grid(True, alpha=0.3)
     return ax
 

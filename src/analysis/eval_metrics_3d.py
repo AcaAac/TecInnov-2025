@@ -25,12 +25,12 @@ def build_episode_summary_3d(
         "distance",
         "captured",
         "outcome",
-        "init_blue_x",
-        "init_blue_y",
-        "init_blue_z",
-        "init_red_x",
-        "init_red_y",
-        "init_red_z",
+        "init_evader_x",
+        "init_evader_y",
+        "init_evader_z",
+        "init_pursuer_x",
+        "init_pursuer_y",
+        "init_pursuer_z",
         "init_distance",
         "mode",
     }
@@ -57,12 +57,12 @@ def build_episode_summary_3d(
                 "policy_name": first.get("policy_name", "unknown"),
                 "mode": first.get("mode", "unknown"),
                 "episode_id": int(first.get("episode_id", 0)),
-                "init_blue_x": _safe_float(first["init_blue_x"]),
-                "init_blue_y": _safe_float(first["init_blue_y"]),
-                "init_blue_z": _safe_float(first["init_blue_z"]),
-                "init_red_x": _safe_float(first["init_red_x"]),
-                "init_red_y": _safe_float(first["init_red_y"]),
-                "init_red_z": _safe_float(first["init_red_z"]),
+                "init_evader_x": _safe_float(first["init_evader_x"]),
+                "init_evader_y": _safe_float(first["init_evader_y"]),
+                "init_evader_z": _safe_float(first["init_evader_z"]),
+                "init_pursuer_x": _safe_float(first["init_pursuer_x"]),
+                "init_pursuer_y": _safe_float(first["init_pursuer_y"]),
+                "init_pursuer_z": _safe_float(first["init_pursuer_z"]),
                 "init_distance": _safe_float(first["init_distance"]),
                 "outcome": str(last.get("outcome", "unknown")),
                 "captured": captured,
@@ -184,11 +184,11 @@ def plot_time_to_capture_by_policy(
 
 def run_initial_condition_grid_3d(
     env,
-    blue_policy,
-    red_policy,
+    evader_policy,
+    pursuer_policy,
     grid_n: int = 9,
-    fixed_red_pos: Optional[Tuple[float, float, float]] = None,
-    fixed_blue_z: Optional[float] = None,
+    fixed_pursuer_pos: Optional[Tuple[float, float, float]] = None,
+    fixed_evader_z: Optional[float] = None,
     max_steps: Optional[int] = None,
     include_trajectories: bool = True,
 ):
@@ -197,12 +197,12 @@ def run_initial_condition_grid_3d(
 
     cfg = env.config
     max_steps = cfg.MAX_STEPS if max_steps is None else int(max_steps)
-    fixed_red = (
+    fixed_pursuer = (
         np.array([cfg.ARENA_SIZE * 0.5, cfg.ARENA_SIZE * 0.5, cfg.ARENA_HEIGHT * 0.5], dtype=float)
-        if fixed_red_pos is None
-        else np.asarray(fixed_red_pos, dtype=float)
+        if fixed_pursuer_pos is None
+        else np.asarray(fixed_pursuer_pos, dtype=float)
     )
-    blue_z = cfg.ARENA_HEIGHT * 0.5 if fixed_blue_z is None else float(fixed_blue_z)
+    evader_z = cfg.ARENA_HEIGHT * 0.5 if fixed_evader_z is None else float(fixed_evader_z)
 
     xs = np.linspace(0.05 * cfg.ARENA_SIZE, 0.95 * cfg.ARENA_SIZE, grid_n)
     ys = np.linspace(0.05 * cfg.ARENA_SIZE, 0.95 * cfg.ARENA_SIZE, grid_n)
@@ -213,30 +213,30 @@ def run_initial_condition_grid_3d(
     for ix, x in enumerate(xs):
         for iy, y in enumerate(ys):
             obs = env.reset(
-                initial_blue_pos=np.array([x, y, blue_z], dtype=float),
-                initial_red_pos=fixed_red,
-                initial_blue_vel=np.zeros(3, dtype=float),
-                initial_red_vel=np.zeros(3, dtype=float),
+                initial_evader_pos=np.array([x, y, evader_z], dtype=float),
+                initial_pursuer_pos=fixed_pursuer,
+                initial_evader_vel=np.zeros(3, dtype=float),
+                initial_pursuer_vel=np.zeros(3, dtype=float),
                 skip_min_dist_check=True,
             )
 
             step_rows = []
             done = False
             while not done and env.step_count < max_steps:
-                act_blue = blue_policy.get_action(obs, "blue")
-                act_red = red_policy.get_action(obs, "red")
-                obs, _, done, info = env.step(act_blue, act_red)
+                act_evader = evader_policy.get_action(obs, "evader")
+                act_pursuer = pursuer_policy.get_action(obs, "pursuer")
+                obs, _, done, info = env.step(act_evader, act_pursuer)
 
                 step_rows.append(
                     {
                         "step": env.step_count,
                         "time": env.t,
-                        "blue_x": float(obs["blue"][0]),
-                        "blue_y": float(obs["blue"][1]),
-                        "blue_z": float(obs["blue"][2]),
-                        "red_x": float(obs["red"][0]),
-                        "red_y": float(obs["red"][1]),
-                        "red_z": float(obs["red"][2]),
+                        "evader_x": float(obs["evader"][0]),
+                        "evader_y": float(obs["evader"][1]),
+                        "evader_z": float(obs["evader"][2]),
+                        "pursuer_x": float(obs["pursuer"][0]),
+                        "pursuer_y": float(obs["pursuer"][1]),
+                        "pursuer_z": float(obs["pursuer"][2]),
                         "distance": float(info.get("distance", env.get_distance())),
                         "captured": int(info.get("caught", False)),
                         "outcome": info.get("outcome", "running"),
@@ -250,17 +250,17 @@ def run_initial_condition_grid_3d(
             if captured and not step_df.empty:
                 time_to_capture = float(step_df.loc[step_df["captured"] == 1, "time"].iloc[0])
 
-            init_dist = float(np.linalg.norm(np.array([x, y, blue_z], dtype=float) - fixed_red))
+            init_dist = float(np.linalg.norm(np.array([x, y, evader_z], dtype=float) - fixed_pursuer))
             regime_rows.append(
                 {
                     "grid_ix": ix,
                     "grid_iy": iy,
-                    "init_blue_x": float(x),
-                    "init_blue_y": float(y),
-                    "init_blue_z": float(blue_z),
-                    "init_red_x": float(fixed_red[0]),
-                    "init_red_y": float(fixed_red[1]),
-                    "init_red_z": float(fixed_red[2]),
+                    "init_evader_x": float(x),
+                    "init_evader_y": float(y),
+                    "init_evader_z": float(evader_z),
+                    "init_pursuer_x": float(fixed_pursuer[0]),
+                    "init_pursuer_y": float(fixed_pursuer[1]),
+                    "init_pursuer_z": float(fixed_pursuer[2]),
                     "init_distance": init_dist,
                     "captured": captured,
                     "evaded": 1 - captured,
@@ -303,7 +303,7 @@ def plot_regime_map_3d(
         ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
         return ax
 
-    pivot = regime_df.pivot(index="init_blue_y", columns="init_blue_x", values="captured")
+    pivot = regime_df.pivot(index="init_evader_y", columns="init_evader_x", values="captured")
     x = pivot.columns.to_numpy(dtype=float)
     y = pivot.index.to_numpy(dtype=float)
     z = pivot.to_numpy(dtype=float)
@@ -318,18 +318,18 @@ def plot_regime_map_3d(
         aspect="equal",
     )
     ax.scatter(
-        regime_df["init_red_x"].iloc[0],
-        regime_df["init_red_y"].iloc[0],
+        regime_df["init_pursuer_x"].iloc[0],
+        regime_df["init_pursuer_y"].iloc[0],
         c="black",
         s=40,
         marker="x",
-        label="Fixed Red",
+        label="Fixed Pursuer",
     )
     ax.set_xlim(0, arena_size)
     ax.set_ylim(0, arena_size)
-    ax.set_xlabel("Blue init x")
-    ax.set_ylabel("Blue init y")
-    z_fixed = float(regime_df["init_blue_z"].iloc[0])
+    ax.set_xlabel("Evader init x")
+    ax.set_ylabel("Evader init y")
+    z_fixed = float(regime_df["init_evader_z"].iloc[0])
     ax.set_title(f"{title} (z={z_fixed:.2f}/{arena_height:.2f})")
     ax.legend(loc="upper right", fontsize=8)
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Capture (1=yes)")
@@ -357,12 +357,12 @@ def plot_trajectory_projections(
     for traj in trajectory_map.values():
         if traj.empty:
             continue
-        axes[0].plot(traj["blue_x"], traj["blue_y"], color="tab:blue", alpha=0.45, linewidth=1.0)
-        axes[0].plot(traj["red_x"], traj["red_y"], color="tab:red", alpha=0.45, linewidth=1.0)
-        axes[1].plot(traj["blue_x"], traj["blue_z"], color="tab:blue", alpha=0.45, linewidth=1.0)
-        axes[1].plot(traj["red_x"], traj["red_z"], color="tab:red", alpha=0.45, linewidth=1.0)
-        axes[2].plot(traj["blue_y"], traj["blue_z"], color="tab:blue", alpha=0.45, linewidth=1.0)
-        axes[2].plot(traj["red_y"], traj["red_z"], color="tab:red", alpha=0.45, linewidth=1.0)
+        axes[0].plot(traj["evader_x"], traj["evader_y"], color="tab:blue", alpha=0.45, linewidth=1.0)
+        axes[0].plot(traj["pursuer_x"], traj["pursuer_y"], color="tab:red", alpha=0.45, linewidth=1.0)
+        axes[1].plot(traj["evader_x"], traj["evader_z"], color="tab:blue", alpha=0.45, linewidth=1.0)
+        axes[1].plot(traj["pursuer_x"], traj["pursuer_z"], color="tab:red", alpha=0.45, linewidth=1.0)
+        axes[2].plot(traj["evader_y"], traj["evader_z"], color="tab:blue", alpha=0.45, linewidth=1.0)
+        axes[2].plot(traj["pursuer_y"], traj["pursuer_z"], color="tab:red", alpha=0.45, linewidth=1.0)
 
     axes[0].set_xlim(0, arena_size)
     axes[0].set_ylim(0, arena_size)
@@ -409,8 +409,8 @@ def plot_trajectory_scatter_3d(
     for traj in trajectory_map.values():
         if traj.empty:
             continue
-        ax.plot(traj["blue_x"], traj["blue_y"], traj["blue_z"], color="tab:blue", alpha=0.5, linewidth=1.0)
-        ax.plot(traj["red_x"], traj["red_y"], traj["red_z"], color="tab:red", alpha=0.5, linewidth=1.0)
+        ax.plot(traj["evader_x"], traj["evader_y"], traj["evader_z"], color="tab:blue", alpha=0.5, linewidth=1.0)
+        ax.plot(traj["pursuer_x"], traj["pursuer_y"], traj["pursuer_z"], color="tab:red", alpha=0.5, linewidth=1.0)
 
     ax.set_xlim(0, arena_size)
     ax.set_ylim(0, arena_size)

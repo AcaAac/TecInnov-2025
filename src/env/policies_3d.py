@@ -48,25 +48,25 @@ class AgentPolicy:
         raise NotImplementedError
 
 
-class RedPursuitPolicy3D(AgentPolicy):
+class PursuerPolicy3D(AgentPolicy):
     def __init__(self, config: Env3DConfig):
         self.config = config
 
-    def get_action(self, obs, agent_type: str = "red"):
-        my_pos = np.asarray(obs["red"][0:3], dtype=np.float64)
-        target_pos = np.asarray(obs["blue"][0:3], dtype=np.float64)
+    def get_action(self, obs, agent_type: str = "pursuer"):
+        my_pos = np.asarray(obs["pursuer"][0:3], dtype=np.float64)
+        target_pos = np.asarray(obs["evader"][0:3], dtype=np.float64)
         diff = target_pos - my_pos
-        return self.config.V_RED_MAX * normalize(diff)
+        return self.config.V_PURSUER_MAX * normalize(diff)
 
 
-class BlueEvasivePolicy3D(AgentPolicy):
+class EvaderPolicy3D(AgentPolicy):
     def __init__(self, config: Env3DConfig, seed: Optional[int] = None):
         self.config = config
         self.rng = np.random.RandomState(config.SEED if seed is None else seed)
 
-    def get_action(self, obs, agent_type: str = "blue"):
-        my_pos = np.asarray(obs["blue"][0:3], dtype=np.float64)
-        opp_pos = np.asarray(obs["red"][0:3], dtype=np.float64)
+    def get_action(self, obs, agent_type: str = "evader"):
+        my_pos = np.asarray(obs["evader"][0:3], dtype=np.float64)
+        opp_pos = np.asarray(obs["pursuer"][0:3], dtype=np.float64)
 
         rel = my_pos - opp_pos
         dist = np.linalg.norm(rel)
@@ -87,4 +87,4 @@ class BlueEvasivePolicy3D(AgentPolicy):
             direction = escape_dir
         if np.linalg.norm(direction) < 1e-9:
             direction = normalize(self.rng.normal(size=3))
-        return self.config.V_BLUE_MAX * direction
+        return self.config.V_EVADER_MAX * direction

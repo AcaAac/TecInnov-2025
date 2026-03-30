@@ -29,7 +29,7 @@ except ImportError:
     torch = None
     DEVICE = None
 
-from env import BlueEvasivePolicy, DroneEnv, load_env_config
+from env import EvaderPolicy, DroneEnv, load_env_config
 
 
 def set_global_seed(seed):
@@ -61,16 +61,16 @@ def _ensure_numpy(a):
 
 def _extract_positions(env, obs):
     if env.mode == "DISCRETE":
-        b_pos = env._idx_to_pos(obs["blue"])
-        r_pos = env._idx_to_pos(obs["red"])
-        b_vel = np.zeros(2, dtype=float)
-        r_vel = np.zeros(2, dtype=float)
+        evader_pos = env._idx_to_pos(obs["evader"])
+        pursuer_pos = env._idx_to_pos(obs["pursuer"])
+        evader_vel = np.zeros(2, dtype=float)
+        pursuer_vel = np.zeros(2, dtype=float)
     else:
-        b_pos = np.asarray(obs["blue"][0:2], dtype=float)
-        r_pos = np.asarray(obs["red"][0:2], dtype=float)
-        b_vel = np.asarray(obs["blue"][2:4], dtype=float)
-        r_vel = np.asarray(obs["red"][2:4], dtype=float)
-    return b_pos, r_pos, b_vel, r_vel
+        evader_pos = np.asarray(obs["evader"][0:2], dtype=float)
+        pursuer_pos = np.asarray(obs["pursuer"][0:2], dtype=float)
+        evader_vel = np.asarray(obs["evader"][2:4], dtype=float)
+        pursuer_vel = np.asarray(obs["pursuer"][2:4], dtype=float)
+    return evader_pos, pursuer_pos, evader_vel, pursuer_vel
 
 
 def _bc_batch_metrics(agent, bx, by, mode, criterion, cfg):
@@ -83,11 +83,11 @@ def _bc_batch_metrics(agent, bx, by, mode, criterion, cfg):
         return loss, accuracy
 
     preds = torch.tanh(agent.model.actor_mean(trunk))
-    target = torch.clamp(by / cfg.V_BLUE_MAX, -1.0, 1.0)
+    target = torch.clamp(by / cfg.V_EVADER_MAX, -1.0, 1.0)
     loss = criterion(preds, target)
 
-    pred_action = preds * cfg.V_BLUE_MAX
-    mae = torch.mean(torch.abs(pred_action - by))
+    predicted_action = preds * cfg.V_EVADER_MAX
+    mae = torch.mean(torch.abs(predicted_action - by))
     return loss, mae
 
 
@@ -197,7 +197,7 @@ def plot_rl_training_results(log_df, output_dir, mode):
 def collect_demonstrations(mode, num_episodes, output_dir, cfg):
     print(f"Collecting {num_episodes} Expert demos in {mode} mode...")
     env = DroneEnv(mode, config=cfg)
-    expert = BlueEvasivePolicy(cfg)
+    expert = EvaderPolicy(cfg)
 
     data = []
 
@@ -206,7 +206,7 @@ def collect_demonstrations(mode, num_episodes, output_dir, cfg):
         done = False
 
         while not done:
-            action = expert.get_action(obs, "blue")
+            action = expert.get_action(obs, "evader")
             state_vec = env.get_flat_state(obs)
 
             record = {
@@ -214,8 +214,8 @@ def collect_demonstrations(mode, num_episodes, output_dir, cfg):
                 "mode": mode,
                 "state": state_vec,
                 "action": action,
-                "blue_pos": obs["blue"][0:2].copy(),
-                "red_pos": obs["red"][0:2].copy(),
+                "evader_pos": obs["evader"][0:2].copy(),
+                "pursuer_pos": obs["pursuer"][0:2].copy(),
             }
             data.append(record)
 
@@ -468,7 +468,7 @@ def train_rl(
                 act_store = action.item()
             else:
                 act_np = action.detach().cpu().numpy()
-                act_env = act_np * cfg.V_BLUE_MAX
+                act_env = act_np * cfg.V_EVADER_MAX
                 act_store = act_np
 
             obs, reward, done, info = env.step(act_env)
@@ -554,7 +554,7 @@ def evaluate_agents(mode, output_dir, cfg, visualize=False, eval_episodes=50):
     state_dim = env.get_state_dim()
     action_dim = env.get_action_dim()
 
-    agents = {"Expert": BlueEvasivePolicy(cfg)}
+    agents = {"Expert": EvaderPolicy(cfg)}
 
     bc_agent = PPOAgent(state_dim, action_dim, mode)
     bc_path = os.path.join(output_dir, f"bc_model_{mode}.pth")
@@ -584,12 +584,12 @@ def evaluate_agents(mode, output_dir, cfg, visualize=False, eval_episodes=50):
         for i in range(eval_episodes):
             obs = env.reset()
             done = False
-            init_b_pos, init_r_pos, _, _ = _extract_positions(env, obs)
+            init_evader_pos, init_pursuer_pos, _, _ = _extract_positions(env, obs)
             init_distance = env.get_distance()
 
             while not done:
                 if name == "Expert":
-                    act_env = policy.get_action(obs, "blue")
+                    act_env = policy.get_action(obs, "evader")
                 else:
                     state_vec = env.get_flat_state(obs)
                     s_tensor = torch.tensor(state_vec, dtype=torch.float32, device=DEVICE)
@@ -599,14 +599,14 @@ def evaluate_agents(mode, output_dir, cfg, visualize=False, eval_episodes=50):
                     if mode == "DISCRETE":
                         act_env = action.item()
                     else:
-                        act_env = action.detach().cpu().numpy() * cfg.V_BLUE_MAX
+                        act_env = action.detach().cpu().numpy() * cfg.V_EVADER_MAX
 
                 obs, _, done, info = env.step(act_env)
                 distance = float(info.get("distance", env.get_distance()))
                 captured = int(bool(info.get("caught", False)))
                 outcome = str(info.get("outcome", "running"))
                 # Log post-step state so position, step/time, and info metrics are aligned.
-                b_pos, r_pos, b_vel, r_vel = _extract_positions(env, obs)
+                evader_pos, pursuer_pos, evader_vel, pursuer_vel = _extract_positions(env, obs)
 
                 if visualize and name == "BC+RL" and i < 5:
                     env.render(ax)
@@ -620,21 +620,21 @@ def evaluate_agents(mode, output_dir, cfg, visualize=False, eval_episodes=50):
                         "step": int(env.step_count),
                         "time": float(env.t),
                         "mode": mode,
-                        "blue_x": float(b_pos[0]),
-                        "blue_y": float(b_pos[1]),
-                        "red_x": float(r_pos[0]),
-                        "red_y": float(r_pos[1]),
-                        "blue_vx": float(b_vel[0]),
-                        "blue_vy": float(b_vel[1]),
-                        "red_vx": float(r_vel[0]),
-                        "red_vy": float(r_vel[1]),
+                        "evader_x": float(evader_pos[0]),
+                        "evader_y": float(evader_pos[1]),
+                        "pursuer_x": float(pursuer_pos[0]),
+                        "pursuer_y": float(pursuer_pos[1]),
+                        "evader_vx": float(evader_vel[0]),
+                        "evader_vy": float(evader_vel[1]),
+                        "pursuer_vx": float(pursuer_vel[0]),
+                        "pursuer_vy": float(pursuer_vel[1]),
                         "distance": distance,
                         "captured": captured,
                         "outcome": outcome,
-                        "init_blue_x": float(init_b_pos[0]),
-                        "init_blue_y": float(init_b_pos[1]),
-                        "init_red_x": float(init_r_pos[0]),
-                        "init_red_y": float(init_r_pos[1]),
+                        "init_evader_x": float(init_evader_pos[0]),
+                        "init_evader_y": float(init_evader_pos[1]),
+                        "init_pursuer_x": float(init_pursuer_pos[0]),
+                        "init_pursuer_y": float(init_pursuer_pos[1]),
                         "init_distance": float(init_distance),
                     }
                 )
