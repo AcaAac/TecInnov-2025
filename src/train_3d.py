@@ -645,19 +645,18 @@ def parse_arguments():
     parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--visualize", action="store_true", help="Visualize RL evaluation")
     parser.add_argument("--live_plots", action="store_true", help="Show live training plots during BC and RL")
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.config_overrides = {}
+    if args.seed is not None:
+        args.config_overrides["SEED"] = args.seed
+    if args.output_dir is not None:
+        args.config_overrides["OUTPUT_DIR"] = args.output_dir
+    return args
 
 
 def main():
     args = parse_arguments()
-
-    overrides = {}
-    if args.seed is not None:
-        overrides["SEED"] = args.seed
-    if args.output_dir is not None:
-        overrides["OUTPUT_DIR"] = args.output_dir
-
-    cfg = load_env_config_3d(profile="train", config_path=args.config, overrides=overrides)
+    cfg = load_env_config_3d(profile="train", config_path=args.config, overrides=args.config_overrides)
     output_dir = cfg.OUTPUT_DIR
 
     os.makedirs(output_dir, exist_ok=True)
