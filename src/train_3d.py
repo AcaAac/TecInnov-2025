@@ -22,14 +22,16 @@ try:
 
     if torch.backends.mps.is_available():
         DEVICE = torch.device("mps")
+    elif torch.cuda.is_available():
+        DEVICE = torch.device("cuda")
     else:
-        DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        DEVICE = torch.device("cpu")
 except ImportError:
     print("Warning: PyTorch not found. Training will not work, but data collection might.")
     torch = None
     DEVICE = None
 
-from env import EvaderPolicy3D, DroneEnv3D, PursuerPolicy3D, load_env_config_3d
+from env import EvaderPolicy3D, DroneEnv3D, load_env_config_3d
 from env.kinematics_3d import clip_norm
 
 
@@ -626,7 +628,7 @@ def evaluate_agents(output_dir, cfg, visualize=False, eval_episodes=50):
     return step_df, episode_df
 
 
-if __name__ == "__main__":
+def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--config", type=str, default=None, help="Path to 3D train config YAML")
@@ -643,8 +645,11 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--visualize", action="store_true", help="Visualize RL evaluation")
     parser.add_argument("--live_plots", action="store_true", help="Show live training plots during BC and RL")
+    return parser.parse_args()
 
-    args = parser.parse_args()
+
+def main():
+    args = parse_arguments()
 
     overrides = {}
     if args.seed is not None:
@@ -705,3 +710,7 @@ if __name__ == "__main__":
             args.visualize,
             eval_episodes=args.eval_episodes,
         )
+
+
+if __name__ == "__main__":
+    main()
