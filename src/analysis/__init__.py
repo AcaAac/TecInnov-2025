@@ -10,16 +10,38 @@ from .eval_metrics import (
     run_initial_condition_grid,
     summarize_policy_eval_figure,
 )
+from .eval_metrics_3d import (
+    add_initial_distance_bins as add_initial_distance_bins_3d,
+    build_episode_summary_3d,
+    compute_success_rates as compute_success_rates_3d,
+    plot_regime_map_3d,
+    plot_success_vs_initial_distance as plot_success_vs_initial_distance_3d,
+    plot_time_to_capture_by_policy as plot_time_to_capture_by_policy_3d,
+    plot_trajectory_projections as plot_trajectory_projections_3d,
+    plot_trajectory_scatter_3d,
+    run_initial_condition_grid_3d,
+    summarize_policy_eval_figure as summarize_policy_eval_figure_3d,
+)
 
 __all__ = [
     "add_initial_distance_bins",
+    "add_initial_distance_bins_3d",
     "build_episode_summary",
+    "build_episode_summary_3d",
     "compute_success_rates",
+    "compute_success_rates_3d",
     "plot_phase_portrait_samples",
     "plot_regime_map",
+    "plot_regime_map_3d",
     "plot_success_vs_initial_distance",
+    "plot_success_vs_initial_distance_3d",
     "plot_time_to_capture_by_policy",
+    "plot_time_to_capture_by_policy_3d",
     "plot_trajectory_grid",
+    "plot_trajectory_projections_3d",
+    "plot_trajectory_scatter_3d",
     "run_initial_condition_grid",
+    "run_initial_condition_grid_3d",
     "summarize_policy_eval_figure",
+    "summarize_policy_eval_figure_3d",
 ]
