@@ -32,7 +32,7 @@ except ImportError:
     DEVICE = None
 
 from env import EvaderPolicy3D, DroneEnv3D, load_env_config_3d
-from env.kinematics_3d import clip_norm
+from env.dynamics.common import clip_norm
 
 
 def set_global_seed(seed):

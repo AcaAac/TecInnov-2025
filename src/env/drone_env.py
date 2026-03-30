@@ -6,7 +6,8 @@ import numpy as np
 
 from .config_loader import EnvConfig, load_env_config
 from .policies import AgentPolicy, EvaderPolicy, PursuerPolicy
-from .vtol import PlanarVTOLDynamics, VTOLDrone, VelocityTrackingController, toroidal_displacement
+from .dynamics.common import toroidal_displacement
+from .dynamics.planar_vtol import PlanarVTOLDynamics, VTOLDrone, VelocityTrackingController
 
 
 class DroneEnv:

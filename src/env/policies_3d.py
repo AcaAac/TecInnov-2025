@@ -5,7 +5,7 @@ from typing import Any, Optional
 import numpy as np
 
 from .config_loader_3d import Env3DConfig
-from .kinematics_3d import normalize
+from .dynamics.common import normalize
 
 
 def _boundary_avoidance_3d(pos: np.ndarray, config: Env3DConfig) -> np.ndarray:

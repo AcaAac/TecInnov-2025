@@ -5,7 +5,8 @@ from typing import Optional
 import numpy as np
 
 from .config_loader_3d import Env3DConfig, load_env_config_3d
-from .kinematics_3d import KinematicDrone3D, euclidean_distance
+from .dynamics.common import euclidean_distance
+from .dynamics.vtol_3d import VTOLDrone3D
 from .policies_3d import AgentPolicy, EvaderPolicy3D, PursuerPolicy3D
 
 
@@ -22,7 +23,9 @@ def _draw_capture_wireframe(ax, center: np.ndarray, radius: float, color: str = 
 
 
 class DroneEnv3D:
-    """Continuous 3D pursuit/evasion environment for drone-like kinematics."""
+    """Continuous 3D pursuit/evasion environment for VTOL-flavored kinematics."""
+
+    DRONE_CLASS = VTOLDrone3D
 
     def __init__(
         self,
@@ -32,6 +35,7 @@ class DroneEnv3D:
         config_path: Optional[str] = None,
         config_overrides: Optional[dict] = None,
         pursuer_policy: Optional[AgentPolicy] = None,
+        drone_class=None,
     ):
         self.mode = mode.upper()
         if self.mode != "CONTINUOUS":
@@ -49,14 +53,15 @@ class DroneEnv3D:
         self.pursuer_state = None
         self.rng = np.random.RandomState(self.config.SEED)
         self.pursuer_policy = pursuer_policy or PursuerPolicy3D(self.config)
+        self.drone_class = drone_class or self.DRONE_CLASS
 
-        self.evader_drone = KinematicDrone3D(
+        self.evader_drone = self.drone_class(
             name="evader",
             config=self.config,
             v_max=self.config.V_EVADER_MAX,
             accel_limit=self.config.ACCEL_EVADER_MAX,
         )
-        self.pursuer_drone = KinematicDrone3D(
+        self.pursuer_drone = self.drone_class(
             name="pursuer",
             config=self.config,
             v_max=self.config.V_PURSUER_MAX,

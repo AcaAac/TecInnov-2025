@@ -3,7 +3,7 @@ from typing import Any, Optional
 import numpy as np
 
 from .config_loader import EnvConfig
-from .vtol import normalize, toroidal_displacement
+from .dynamics.common import normalize, toroidal_displacement
 
 
 def _get_toroidal_displacement(
