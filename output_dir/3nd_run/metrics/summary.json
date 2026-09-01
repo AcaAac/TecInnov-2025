@@ -1,0 +1,7 @@
+{
+  "escape_rate": 0.34,
+  "mean_escape_time_s": 29.5825,
+  "mean_episode_reward": 958.9690812056256,
+  "num_train_iterations": 200,
+  "num_eval_episodes": 100
+}
