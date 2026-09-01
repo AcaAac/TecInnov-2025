@@ -3,10 +3,12 @@ import numpy as np
 
 
 class DoDFEnv(gym.Env):
-    """3D evader-vs-kamikaze simulator with reduced-order evader dynamics.
+    """3D evader-vs-kamikaze simulator with selectable evader dynamics.
 
-    The RL-controlled evader learns high-level commands. The kamikaze drone is
-    scripted to pursue and intercept the evader.
+    The default blue evader retains the original reduced-order linear model.
+    Setting ``more_realistic`` selects an AR3-like nonlinear 6-DOF model while
+    preserving the same action and observation interfaces. The red kamikaze
+    drone remains the original scripted four-rotor rigid-body model.
     """
 
     def __init__(self, config=None):
@@ -21,6 +23,7 @@ class DoDFEnv(gym.Env):
         self.desired_follow_distance = float(config.get("desired_follow_distance", 20.0))
         self.start_sep_min = float(config.get("start_sep_min", 60.0))
         self.start_sep_max = float(config.get("start_sep_max", 90.0))
+        self.more_realistic = bool(config.get("more_realistic", False))
 
         # High-level command limits commanded by RL: [u_cmd, theta_cmd, phi_cmd]
         self.u_trim = float(config.get("u_trim", 12.0))
@@ -132,6 +135,79 @@ class DoDFEnv(gym.Env):
         self.x_lat_min = np.array(config.get("x_lat_min", [-12.0, -4.5, -4.5, -1.22, -np.pi]), dtype=np.float32)
         self.x_lat_max = np.array(config.get("x_lat_max", [12.0, 4.5, 4.5, 1.22, np.pi]), dtype=np.float32)
 
+        # Optional AR3-like blue-aircraft model. The aerodynamic derivatives
+        # supplied by Nuno are used directly; geometry, inertia and the missing
+        # control derivatives are explicit configurable engineering estimates.
+        self.blue_mass = float(config.get("blue_mass", 25.0))
+        self.blue_inertia = np.array(config.get("blue_inertia", [4.0, 4.5, 8.0]), dtype=np.float64)
+        if self.blue_inertia.shape != (3,) or np.any(self.blue_inertia <= 0.0):
+            raise ValueError("blue_inertia must contain three positive values [Ixx, Iyy, Izz]")
+        self.blue_wing_area = float(config.get("blue_wing_area", 1.6407473467))
+        self.blue_wingspan = float(config.get("blue_wingspan", 3.50))
+        self.blue_mean_chord = float(config.get("blue_mean_chord", 0.47))
+        self.blue_air_density = float(config.get("blue_air_density", 1.225))
+        self.blue_trim_speed = float(config.get("blue_trim_speed", 23.6111111111))
+        self.blue_trim_alpha = float(config.get("blue_trim_alpha", -0.0678926212))
+        self.blue_trim_throttle = float(config.get("blue_trim_throttle", 0.7139662384))
+        self.blue_max_power = float(config.get("blue_max_power", 2000.0))
+        self.blue_prop_efficiency = float(config.get("blue_prop_efficiency", 0.75))
+        self.blue_prop_min_speed = float(config.get("blue_prop_min_speed", 8.0))
+        self.blue_max_static_thrust = float(config.get("blue_max_static_thrust", 120.0))
+        self.blue_dyn_substeps = max(int(config.get("blue_dyn_substeps", 5)), 1)
+        self.blue_alpha_stall = abs(float(config.get("blue_alpha_stall", np.deg2rad(15.0))))
+        self.blue_stall_drag = float(config.get("blue_stall_drag", 2.0))
+        self.blue_CL_min = float(config.get("blue_CL_min", -0.8))
+        self.blue_CL_max = float(config.get("blue_CL_max", 1.4))
+        self.blue_max_body_speed = float(config.get("blue_max_body_speed", 80.0))
+        self.blue_max_body_rate = float(config.get("blue_max_body_rate", np.deg2rad(300.0)))
+
+        self.blue_aero = {
+            "CL0": float(config.get("blue_CL0", 0.83718)),
+            "CLa": float(config.get("blue_CLa", 5.80233)),
+            "CD0": float(config.get("blue_CD0", 0.08832)),
+            "CDa": float(config.get("blue_CDa", 0.11115)),
+            "Cm0": float(config.get("blue_Cm0", -0.07347)),
+            "Cma": float(config.get("blue_Cma", -1.08215)),
+            "CLq": float(config.get("blue_CLq", 8.10725)),
+            "Cmq": float(config.get("blue_Cmq", -13.30914)),
+            "CY0": float(config.get("blue_CY0", 0.0)),
+            "CYb": float(config.get("blue_CYb", -0.15523)),
+            "Cl0": float(config.get("blue_Cl0", 0.0)),
+            "Clb": float(config.get("blue_Clb", -0.00493)),
+            "Cn0": float(config.get("blue_Cn0", 0.0)),
+            "Cnb": float(config.get("blue_Cnb", 0.04165)),
+            "CYp": float(config.get("blue_CYp", 0.06254)),
+            "CYr": float(config.get("blue_CYr", 0.09638)),
+            "Clp": float(config.get("blue_Clp", -0.65507)),
+            "Clr": float(config.get("blue_Clr", 0.19007)),
+            "Cnp": float(config.get("blue_Cnp", -0.07998)),
+            "Cnr": float(config.get("blue_Cnr", -0.03311)),
+            # Estimated derivatives; replace when measured values are available.
+            "CLde": float(config.get("blue_CLde", 0.35)),
+            "Cmde": float(config.get("blue_Cmde", -1.10)),
+            "CYda": float(config.get("blue_CYda", 0.0)),
+            "Clda": float(config.get("blue_Clda", 0.12)),
+            "Cnda": float(config.get("blue_Cnda", -0.02)),
+        }
+        if self.more_realistic:
+            if min(self.blue_mass, self.blue_wing_area, self.blue_wingspan, self.blue_mean_chord) <= 0.0:
+                raise ValueError("AR3-like mass and wing geometry must be positive")
+            if not 0.0 < self.blue_prop_efficiency <= 1.0:
+                raise ValueError("blue_prop_efficiency must be in (0, 1]")
+            # Use a self-consistent AR3-like trim only in the opt-in mode.
+            self.u_trim = self.blue_trim_speed
+            self.x_lon_trim = np.array(
+                [
+                    self.blue_trim_speed * np.cos(self.blue_trim_alpha),
+                    -self.blue_trim_speed * np.sin(self.blue_trim_alpha),
+                    0.0,
+                    -self.blue_trim_alpha,
+                ],
+                dtype=np.float32,
+            )
+            self.x_lat_trim = np.zeros(5, dtype=np.float32)
+            self.delta_trim = np.array([0.0, self.blue_trim_throttle, 0.0, 0.0], dtype=np.float32)
+
         # RL action in [-1, 1]: [elevator, throttle, aileron]. Flap and rudder
         # are intentionally excluded from the controllable interface.
         self.action_space = gym.spaces.Box(
@@ -161,6 +237,7 @@ class DoDFEnv(gym.Env):
         self.x_lat = np.zeros(5, dtype=np.float32)
         self.delta = np.zeros(4, dtype=np.float32)
         self.filtered_action = np.zeros(3, dtype=np.float32)
+        self.blue_last_telemetry = {}
 
         self.ref_pos = np.zeros(3, dtype=np.float32)
         self.ref_vel = np.zeros(3, dtype=np.float32)
@@ -235,6 +312,108 @@ class DoDFEnv(gym.Env):
             ]
         ).astype(np.float32)
 
+    def _step_realistic_blue(self) -> np.ndarray:
+        """Advance the opt-in AR3-like nonlinear rigid-body model."""
+        dt_blue = self.dt / float(self.blue_dyn_substeps)
+        velocity_body = np.array(
+            [self.x_lon[0], self.x_lat[0], self.x_lon[1]], dtype=np.float64
+        )
+        body_rates = np.array(
+            [self.x_lat[1], self.x_lon[2], self.x_lat[2]], dtype=np.float64
+        )
+        attitude = np.array(
+            [self.x_lat[3], self.x_lon[3], self.learner_psi], dtype=np.float64
+        )
+        de = float(self.delta[0] - self.delta_trim[0])
+        throttle = float(np.clip(self.delta[1], 0.0, 1.0))
+        da = float(self.delta[2] - self.delta_trim[2])
+        aero = self.blue_aero
+
+        for _ in range(self.blue_dyn_substeps):
+            u_b, v_b, w_b = velocity_body
+            p_b, q_b, r_b = body_rates
+            phi, theta, psi = attitude
+            airspeed = max(float(np.linalg.norm(velocity_body)), 0.1)
+            rate_speed = max(airspeed, self.blue_prop_min_speed)
+            alpha = float(np.arctan2(-w_b, max(u_b, 1e-3)))
+            beta = float(np.arcsin(np.clip(v_b / airspeed, -1.0, 1.0)))
+            # Nuno's derivatives use the conventional aircraft body frame
+            # (z down). This environment uses z up, so conventional p/q/r and
+            # aerodynamic roll/pitch/yaw moments have the opposite sign.
+            p_hat = -p_b * self.blue_wingspan / (2.0 * rate_speed)
+            q_hat = -q_b * self.blue_mean_chord / (2.0 * rate_speed)
+            r_hat = -r_b * self.blue_wingspan / (2.0 * rate_speed)
+
+            CL_linear = aero["CL0"] + aero["CLa"] * alpha + aero["CLq"] * q_hat + aero["CLde"] * de
+            CL = float(np.clip(CL_linear, self.blue_CL_min, self.blue_CL_max))
+            stall_excess = max(abs(alpha) - self.blue_alpha_stall, 0.0)
+            CD = max(aero["CD0"] + aero["CDa"] * alpha, 0.02) + self.blue_stall_drag * stall_excess ** 2
+            Cm = aero["Cm0"] + aero["Cma"] * alpha + aero["Cmq"] * q_hat + aero["Cmde"] * de
+            CY = aero["CY0"] + aero["CYb"] * beta + aero["CYp"] * p_hat + aero["CYr"] * r_hat + aero["CYda"] * da
+            Cl = aero["Cl0"] + aero["Clb"] * beta + aero["Clp"] * p_hat + aero["Clr"] * r_hat + aero["Clda"] * da
+            Cn = aero["Cn0"] + aero["Cnb"] * beta + aero["Cnp"] * p_hat + aero["Cnr"] * r_hat + aero["Cnda"] * da
+
+            dynamic_pressure = 0.5 * self.blue_air_density * airspeed ** 2
+            lift = dynamic_pressure * self.blue_wing_area * CL
+            drag = dynamic_pressure * self.blue_wing_area * CD
+            side_force = dynamic_pressure * self.blue_wing_area * CY
+            xz_speed = max(float(np.hypot(u_b, w_b)), 0.1)
+            drag_dir = np.array([-u_b / xz_speed, 0.0, -w_b / xz_speed])
+            lift_dir = np.array([-w_b / xz_speed, 0.0, u_b / xz_speed])
+            prop_speed = max(airspeed, self.blue_prop_min_speed)
+            thrust = min(
+                throttle * self.blue_max_power * self.blue_prop_efficiency / prop_speed,
+                throttle * self.blue_max_static_thrust,
+            )
+            force_body = drag * drag_dir + lift * lift_dir + np.array([thrust, side_force, 0.0])
+            moment_body = -dynamic_pressure * self.blue_wing_area * np.array(
+                [self.blue_wingspan * Cl, self.blue_mean_chord * Cm, self.blue_wingspan * Cn]
+            )
+
+            rotation = self._rotation_body_to_inertial(phi, theta, psi).astype(np.float64)
+            gravity_body = rotation.T @ np.array([0.0, 0.0, -self.gravity])
+            velocity_dot = force_body / self.blue_mass + gravity_body - np.cross(body_rates, velocity_body)
+            angular_dot = (
+                moment_body - np.cross(body_rates, self.blue_inertia * body_rates)
+            ) / self.blue_inertia
+            velocity_body += dt_blue * velocity_dot
+            body_rates += dt_blue * angular_dot
+            velocity_body = np.clip(velocity_body, -self.blue_max_body_speed, self.blue_max_body_speed)
+            body_rates = np.clip(body_rates, -self.blue_max_body_rate, self.blue_max_body_rate)
+
+            phi, theta, psi = attitude
+            p_b, q_b, r_b = body_rates
+            cos_theta = max(abs(float(np.cos(theta))), 1e-3)
+            euler_rates = np.array(
+                [
+                    p_b + np.tan(theta) * (q_b * np.sin(phi) + r_b * np.cos(phi)),
+                    q_b * np.cos(phi) - r_b * np.sin(phi),
+                    (q_b * np.sin(phi) + r_b * np.cos(phi)) / cos_theta,
+                ]
+            )
+            attitude += dt_blue * euler_rates
+            attitude[0:2] = np.clip(attitude[0:2], -np.deg2rad(80.0), np.deg2rad(80.0))
+            attitude[2] = (attitude[2] + np.pi) % (2.0 * np.pi) - np.pi
+            rotation = self._rotation_body_to_inertial(*attitude).astype(np.float64)
+            learner_velocity = rotation @ velocity_body
+            self.learner_pos += (dt_blue * learner_velocity).astype(np.float32)
+
+        self.x_lon = np.array([velocity_body[0], velocity_body[2], body_rates[1], attitude[1]], dtype=np.float32)
+        self.x_lat = np.array(
+            [velocity_body[1], body_rates[0], body_rates[2], attitude[0], attitude[2]], dtype=np.float32
+        )
+        self.learner_psi = float(attitude[2])
+        self.blue_last_telemetry = {
+            "telemetry_blue_airspeed_mps": airspeed,
+            "telemetry_blue_alpha_rad": alpha,
+            "telemetry_blue_beta_rad": beta,
+            "telemetry_blue_CL": CL,
+            "telemetry_blue_CD": CD,
+            "telemetry_blue_thrust_n": thrust,
+            "telemetry_blue_shaft_power_w": throttle * self.blue_max_power,
+        }
+        return learner_velocity.astype(np.float32)
+
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self._episode_len = 0
@@ -247,6 +426,7 @@ class DoDFEnv(gym.Env):
         self.x_lat = self.x_lat_trim.copy()
         self.delta = self.delta_trim.copy()
         self.filtered_action = np.zeros(3, dtype=np.float32)
+        self.blue_last_telemetry = {}
 
         start_sep_xy = float(self.np_random.uniform(self.start_sep_min, self.start_sep_max))
         start_bearing = float(self.np_random.uniform(-np.pi, np.pi))
@@ -312,35 +492,40 @@ class DoDFEnv(gym.Env):
         # Rudder is removed as a control variable and cannot drift through lag.
         self.delta[3] = self.delta_trim[3]
 
-        # 3) Reduced-order dynamics integration.
-        delta_pert = self.delta - self.delta_trim
-        u_lon = np.array([delta_pert[0], delta_pert[1]], dtype=np.float32)
-        u_lat = np.array([delta_pert[2], delta_pert[3]], dtype=np.float32)
-        # A/B are linearized around trim, so propagate perturbation states.
-        xdot_lon = self.A_lon @ (self.x_lon - self.x_lon_trim) + self.B_lon @ u_lon
-        xdot_lat = self.A_lat @ (self.x_lat - self.x_lat_trim) + self.B_lat @ u_lat
-        self.x_lon = self.x_lon + self.dt * xdot_lon
-        self.x_lat = self.x_lat + self.dt * xdot_lat
-        self.x_lon = np.clip(self.x_lon, self.x_lon_min, self.x_lon_max)
-        self.x_lat = np.clip(self.x_lat, self.x_lat_min, self.x_lat_max)
-        # Enforce Eq. 9.60 attitude limits on the actual propagated states, not
-        # only on high-level commands. Aileron remains the source of bank.
-        self.x_lon[3] = np.clip(self.x_lon[3], -self.theta_cmd_max, self.theta_cmd_max)
-        self.x_lat[3] = np.clip(self.x_lat[3], -self.phi_cmd_max, self.phi_cmd_max)
+        if self.more_realistic:
+            # Nonlinear forces, moments, rigid-body integration and kinematics.
+            learner_vel = self._step_realistic_blue()
+            theta = float(self.x_lon[3])
+            phi = float(self.x_lat[3])
+        else:
+            # 3) Original reduced-order dynamics integration.
+            delta_pert = self.delta - self.delta_trim
+            u_lon = np.array([delta_pert[0], delta_pert[1]], dtype=np.float32)
+            u_lat = np.array([delta_pert[2], delta_pert[3]], dtype=np.float32)
+            # A/B are linearized around trim, so propagate perturbation states.
+            xdot_lon = self.A_lon @ (self.x_lon - self.x_lon_trim) + self.B_lon @ u_lon
+            xdot_lat = self.A_lat @ (self.x_lat - self.x_lat_trim) + self.B_lat @ u_lat
+            self.x_lon = self.x_lon + self.dt * xdot_lon
+            self.x_lat = self.x_lat + self.dt * xdot_lat
+            self.x_lon = np.clip(self.x_lon, self.x_lon_min, self.x_lon_max)
+            self.x_lat = np.clip(self.x_lat, self.x_lat_min, self.x_lat_max)
+            # Enforce Eq. 9.60 attitude limits on the actual propagated states.
+            self.x_lon[3] = np.clip(self.x_lon[3], -self.theta_cmd_max, self.theta_cmd_max)
+            self.x_lat[3] = np.clip(self.x_lat[3], -self.phi_cmd_max, self.phi_cmd_max)
 
-        # 4) Kinematics: body velocity -> inertial velocity -> position.
-        u_b = float(max(self.x_lon[0], 0.1))
-        v_b = float(self.x_lat[0])
-        w_b = float(self.x_lon[1])
-        theta = float(self.x_lon[3])
-        phi = float(self.x_lat[3])
-        r = float(self.x_lat[2])
+            # 4) Original kinematics: body velocity -> inertial velocity -> position.
+            u_b = float(max(self.x_lon[0], 0.1))
+            v_b = float(self.x_lat[0])
+            w_b = float(self.x_lon[1])
+            theta = float(self.x_lon[3])
+            phi = float(self.x_lat[3])
+            r = float(self.x_lat[2])
 
-        self.learner_psi = float((self.learner_psi + self.dt * r + np.pi) % (2.0 * np.pi) - np.pi)
-        R_bi = self._rotation_body_to_inertial(phi, theta, self.learner_psi)
-        learner_vel = R_bi @ np.array([u_b, v_b, w_b], dtype=np.float32)
-        learner_vel[2] = np.clip(learner_vel[2], -10, 10)
-        self.learner_pos = self.learner_pos + self.dt * learner_vel
+            self.learner_psi = float((self.learner_psi + self.dt * r + np.pi) % (2.0 * np.pi) - np.pi)
+            R_bi = self._rotation_body_to_inertial(phi, theta, self.learner_psi)
+            learner_vel = R_bi @ np.array([u_b, v_b, w_b], dtype=np.float32)
+            learner_vel[2] = np.clip(learner_vel[2], -10, 10)
+            self.learner_pos = self.learner_pos + self.dt * learner_vel
 
         # Scripted red drone: aggressive lead pursuit so blue learns to evade.
         los_vec = self.learner_pos - self.ref_pos
@@ -519,6 +704,7 @@ class DoDFEnv(gym.Env):
             "telemetry_red_cmd_turn_saturated": yaw_cmd_saturated,
             "telemetry_red_real_turn_saturated": yaw_real_saturated,
             "control_mode": self.control_mode,
+            "blue_dynamics_mode": "ar3_6dof" if self.more_realistic else "linear_reduced_order",
             "learner_phi_rad": phi,
             "learner_theta_rad": theta,
             "learner_psi_rad": self.learner_psi,
@@ -532,5 +718,6 @@ class DoDFEnv(gym.Env):
             "delta_a": float(self.delta[2]),
             "delta_r": float(self.delta[3]),  # fixed at trim; retained for telemetry compatibility
         }
+        info.update(self.blue_last_telemetry)
 
         return self._get_obs(), float(reward), terminated, truncated, info

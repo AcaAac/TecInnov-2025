@@ -6,13 +6,37 @@ from models.PPO import PPOTrainer
 from utils import save_metrics_and_plots, setup_output_dirs
 
 
-def load_env_config(path: Path | None) -> dict[str, object]:
+def _merge_config(base: dict[str, object], overrides: dict[str, object]) -> dict[str, object]:
+    merged = dict(base)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_config(merged[key], value)  # type: ignore[arg-type]
+        else:
+            merged[key] = value
+    return merged
+
+
+def load_env_config(path: Path | None, seen: set[Path] | None = None) -> dict[str, object]:
     if path is None:
         return {}
     if not path.exists():
         raise FileNotFoundError(f"Environment config file not found: {path}")
+    resolved_path = path.resolve()
+    seen = set() if seen is None else seen
+    if resolved_path in seen:
+        raise ValueError(f"Circular environment config inheritance: {resolved_path}")
+    seen.add(resolved_path)
     with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+        config = json.load(f)
+    if not isinstance(config, dict):
+        raise ValueError(f"Environment config must contain a JSON object: {path}")
+    parent_name = config.pop("_extends", None)
+    if parent_name is None:
+        return config
+    if not isinstance(parent_name, str):
+        raise ValueError(f"_extends must be a string in environment config: {path}")
+    parent_config = load_env_config(path.parent / parent_name, seen)
+    return _merge_config(parent_config, config)
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,6 +60,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--world-limit", type=float, default=None, help="World coordinate limit.")
     parser.add_argument("--desired-follow-distance", type=float, default=None, help="Desired follow distance.")
     parser.add_argument("--min-separation", type=float, default=None, help="Minimum separation.")
+    parser.add_argument(
+        "--more-realistic",
+        action="store_true",
+        help="Use opt-in AR3-like nonlinear 6-DOF dynamics for the blue drone.",
+    )
     return parser.parse_args()
 
 def main() -> None:
@@ -54,6 +83,8 @@ def main() -> None:
         env_config["desired_follow_distance"] = args.desired_follow_distance
     if args.min_separation is not None:
         env_config["min_separation"] = args.min_separation
+    if args.more_realistic:
+        env_config["more_realistic"] = True
 
     trainer = PPOTrainer(env_config=env_config)
 
